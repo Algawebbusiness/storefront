@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Mail, Lock, Eye, EyeOff, User } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/ui/components/ui/button";
 import { Input } from "@/ui/components/ui/input";
 import { Label } from "@/ui/components/ui/label";
@@ -11,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 export function SignUpForm() {
 	const params = useParams<{ channel: string }>();
+	const t = useTranslations("auth");
 
 	const [firstName, setFirstName] = useState("");
 	const [lastName, setLastName] = useState("");
@@ -30,17 +32,17 @@ export function SignUpForm() {
 
 		// Validation
 		if (!email || !validateEmail(email)) {
-			setError("Please enter a valid email address");
+			setError(t("invalidEmail"));
 			return;
 		}
 
 		if (password.length < 8) {
-			setError("Password must be at least 8 characters");
+			setError(t("passwordMinLength"));
 			return;
 		}
 
 		if (password !== confirmPassword) {
-			setError("Passwords do not match");
+			setError(t("passwordMismatch"));
 			return;
 		}
 
@@ -69,9 +71,9 @@ export function SignUpForm() {
 			if (data.errors?.length) {
 				const err = data.errors[0];
 				if (err.code === "UNIQUE") {
-					setError("An account with this email already exists. Please sign in instead.");
+					setError(t("accountExists"));
 				} else {
-					setError(err.message || "Failed to create account");
+					setError(err.message || t("failedCreateAccount"));
 				}
 				return;
 			}
@@ -79,7 +81,7 @@ export function SignUpForm() {
 			// Success - show confirmation message
 			setSuccess(true);
 		} catch {
-			setError("An error occurred. Please try again.");
+			setError(t("errorOccurred"));
 		} finally {
 			setIsSubmitting(false);
 		}
@@ -101,13 +103,13 @@ export function SignUpForm() {
 								<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
 							</svg>
 						</div>
-						<h2 className="text-xl font-semibold">Account Created!</h2>
-						<p className="mt-2 text-muted-foreground">Please check your email to verify your account.</p>
+						<h2 className="text-xl font-semibold">{t("accountCreated")}</h2>
+						<p className="mt-2 text-muted-foreground">{t("checkEmailVerify")}</p>
 						<Link
 							href={`/${params.channel}/login`}
 							className="mt-6 inline-block text-sm font-medium text-foreground underline underline-offset-2 hover:no-underline"
 						>
-							Go to Sign In
+							{t("goToSignIn")}
 						</Link>
 					</div>
 				</div>
@@ -119,14 +121,14 @@ export function SignUpForm() {
 		<div className="mx-auto mt-16 w-full max-w-md">
 			<div className="rounded-lg border border-border bg-card p-8 shadow-sm">
 				<div className="mb-6 text-center">
-					<h1 className="text-2xl font-semibold">Create an Account</h1>
+					<h1 className="text-2xl font-semibold">{t("signUp")}</h1>
 					<p className="mt-2 text-sm text-muted-foreground">
-						Already have an account?{" "}
+						{t("haveAccount")}{" "}
 						<Link
 							href={`/${params.channel}/login`}
 							className="font-medium text-foreground underline underline-offset-2 hover:no-underline"
 						>
-							Sign in
+							{t("signIn")}
 						</Link>
 					</p>
 				</div>
@@ -142,14 +144,14 @@ export function SignUpForm() {
 					<div className="grid grid-cols-2 gap-4">
 						<div className="space-y-1.5">
 							<Label htmlFor="firstName" className="text-sm font-medium">
-								First name
+								{t("firstName")}
 							</Label>
 							<div className="relative">
 								<User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 								<Input
 									id="firstName"
 									type="text"
-									placeholder="First name"
+									placeholder={t("firstName")}
 									autoComplete="given-name"
 									value={firstName}
 									onChange={(e) => setFirstName(e.target.value)}
@@ -159,12 +161,12 @@ export function SignUpForm() {
 						</div>
 						<div className="space-y-1.5">
 							<Label htmlFor="lastName" className="text-sm font-medium">
-								Last name
+								{t("lastName")}
 							</Label>
 							<Input
 								id="lastName"
 								type="text"
-								placeholder="Last name"
+								placeholder={t("lastName")}
 								autoComplete="family-name"
 								value={lastName}
 								onChange={(e) => setLastName(e.target.value)}
@@ -176,7 +178,7 @@ export function SignUpForm() {
 					{/* Email */}
 					<div className="space-y-1.5">
 						<Label htmlFor="email" className="text-sm font-medium">
-							Email address
+							{t("email")}
 						</Label>
 						<div className="relative">
 							<Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -197,14 +199,14 @@ export function SignUpForm() {
 					{/* Password */}
 					<div className="space-y-1.5">
 						<Label htmlFor="password" className="text-sm font-medium">
-							Password
+							{t("password")}
 						</Label>
 						<div className="relative">
 							<Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 							<Input
 								id="password"
 								type={showPassword ? "text" : "password"}
-								placeholder="Minimum 8 characters…"
+								placeholder={t("passwordMinPlaceholder")}
 								autoComplete="new-password"
 								value={password}
 								onChange={(e) => setPassword(e.target.value)}
@@ -215,7 +217,7 @@ export function SignUpForm() {
 							<button
 								type="button"
 								onClick={() => setShowPassword(!showPassword)}
-								aria-label={showPassword ? "Hide password" : "Show password"}
+								aria-label={showPassword ? t("hidePassword") : t("showPassword")}
 								className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
 							>
 								{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -226,14 +228,14 @@ export function SignUpForm() {
 					{/* Confirm Password */}
 					<div className="space-y-1.5">
 						<Label htmlFor="confirmPassword" className="text-sm font-medium">
-							Confirm password
+							{t("confirmPassword")}
 						</Label>
 						<div className="relative">
 							<Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 							<Input
 								id="confirmPassword"
 								type={showPassword ? "text" : "password"}
-								placeholder="Re-enter your password"
+								placeholder={t("reenterPassword")}
 								autoComplete="new-password"
 								value={confirmPassword}
 								onChange={(e) => setConfirmPassword(e.target.value)}
@@ -245,22 +247,22 @@ export function SignUpForm() {
 							/>
 						</div>
 						{confirmPassword && password !== confirmPassword && (
-							<p className="text-sm text-destructive">Passwords do not match</p>
+							<p className="text-sm text-destructive">{t("passwordMismatch")}</p>
 						)}
 					</div>
 
 					<Button type="submit" disabled={isSubmitting} className="h-12 w-full text-base font-semibold">
-						{isSubmitting ? "Creating account…" : "Create Account"}
+						{isSubmitting ? t("creatingAccount") : t("createAccount")}
 					</Button>
 
 					<p className="text-center text-xs text-muted-foreground">
-						By creating an account, you agree to our{" "}
+						{t("termsAgree")}{" "}
 						<Link href="#" className="underline hover:no-underline">
-							Terms of Service
+							{t("termsOfService")}
 						</Link>{" "}
-						and{" "}
+						{t("and")}{" "}
 						<Link href="#" className="underline hover:no-underline">
-							Privacy Policy
+							{t("privacyPolicy")}
 						</Link>
 					</p>
 				</form>

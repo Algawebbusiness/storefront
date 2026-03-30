@@ -82,7 +82,10 @@
 		"passwordMinPlaceholder": "Minimum 8 characters…",
 		"reenterPassword": "Re-enter your password",
 		"hidePassword": "Hide password",
-		"showPassword": "Show password"
+		"showPassword": "Show password",
+		"passwordMismatch": "Passwords do not match",
+		"accountExists": "An account with this email already exists. Please sign in instead.",
+		"failedCreateAccount": "Failed to create account"
 	},
 	"cart": {
 		"yourBag": "Your Bag",

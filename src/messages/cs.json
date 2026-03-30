@@ -82,7 +82,10 @@
 		"passwordMinPlaceholder": "Minimálně 8 znaků…",
 		"reenterPassword": "Zadejte heslo znovu",
 		"hidePassword": "Skrýt heslo",
-		"showPassword": "Zobrazit heslo"
+		"showPassword": "Zobrazit heslo",
+		"passwordMismatch": "Hesla se neshodují",
+		"accountExists": "Účet s tímto e-mailem již existuje. Přihlaste se.",
+		"failedCreateAccount": "Nepodařilo se vytvořit účet"
 	},
 	"cart": {
 		"yourBag": "Váš košík",
