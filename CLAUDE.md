@@ -511,13 +511,24 @@ src/messages/en.json        — ~360 řádků anglických překladů
 src/ui/components/locale-switcher.tsx — CZ/EN přepínač
 ```
 
-**Komponenty, které POUŽÍVAJÍ next-intl:**
-- `src/checkout/components/shipping/zasilkovna-widget.tsx` — `useTranslations("checkout")`
-- `src/checkout/components/address-form/czech-business-fields.tsx` — `useTranslations("checkout")` + `useTranslations("common")`
-- `src/ui/components/locale-switcher.tsx` — `useLocale()`
+**Migrované komponenty (10+):**
+- `footer.tsx` — `getTranslations("footer")`
+- `nav/search-bar.tsx` — `getTranslations("search")`
+- `nav/mobile-menu.tsx` — `useTranslations("nav")`
+- `cart/cart-drawer.tsx` — `useTranslations("cart")` (15+ strings)
+- `pdp/add-to-cart.tsx` — `useTranslations("cart")` + `useTranslations("checkout")`
+- `pagination.tsx` — `useTranslations("pagination")`
+- `auth/login-mode.tsx` — `useTranslations("auth")` (20+ strings)
+- `sign-up-form.tsx` — `useTranslations("auth")` (25+ strings)
+- `checkout/shipping/zasilkovna-widget.tsx` — `useTranslations("checkout")`
+- `checkout/address-form/czech-business-fields.tsx` — `useTranslations("checkout")`
+- `locale-switcher.tsx` — `useLocale()`
 
-**Co zbývá:**
-- [ ] Postupná migrace UI komponent na překlady (většina má hardcoded anglické texty)
+**Co zbývá (nižší priorita):**
+- [ ] Account stránky (profil, adresy, objednávky)
+- [ ] PLP komponenty (filter-bar, product-card)
+- [ ] Search results page
+- [ ] Stránky (login/page.tsx, signup/page.tsx, cart/page.tsx)
 
 **Pattern pro Server Components:**
 ```tsx
@@ -691,9 +702,9 @@ PRD: `saleor-agent-first-prd.md`
 | Fáze | Stav | Popis |
 |------|------|-------|
 | Phase 1: Foundation | ✅ Hotovo | Shared utils, typy, UCP profil, ACP feed |
-| Phase 2: UCP checkout (REST) | 🔲 Plánováno | create/get/update/complete checkout |
-| Phase 3: ACP checkout | 🔲 Plánováno | ACP checkout + Stripe payment token |
-| Phase 4: UCP extensions + MCP | 🔲 Plánováno | Fulfillment, discount, MCP binding |
+| Phase 2: UCP checkout (REST) | ✅ Hotovo | create/get/update/complete/cancel checkout |
+| Phase 3: ACP checkout | ✅ Hotovo | ACP checkout + Stripe payment token |
+| Phase 4: MCP checkout tools | ✅ Hotovo | 5 authenticated MCP tools (12 total) |
 | Phase 5: Order management | 🔲 Plánováno | Webhooky, order tracking |
 
 ### Struktura kódu
@@ -719,8 +730,15 @@ src/lib/protocols/
 |----------|----------|-------|
 | `GET /.well-known/ucp` | UCP | Business profile (discovery) |
 | `GET /api/acp/products/feed` | ACP | Product feed pro OpenAI |
+| `POST /api/ucp/rest/checkout-sessions` | UCP | Create checkout |
+| `GET/PATCH /api/ucp/rest/checkout-sessions/[id]` | UCP | Get/update checkout |
+| `POST .../[id]/complete` | UCP | Complete with payment |
+| `POST .../[id]/cancel` | UCP | Cancel checkout |
+| `POST /api/acp/checkout` | ACP | Create checkout session |
+| `GET/PATCH /api/acp/checkout/[id]` | ACP | Get/update session |
+| `POST /api/acp/checkout/[id]/complete` | ACP | Complete with Stripe token |
 | `GET /api/products/feed.json` | — | Existující feed (lidský formát) |
-| `POST /mcp` | MCP | Existující read-only MCP server |
+| `POST /mcp` | MCP | 12 tools (7 read-only + 5 checkout) |
 
 ### Env variables (protocols)
 
