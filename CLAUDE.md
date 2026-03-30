@@ -675,6 +675,68 @@ Po nastavení `NEXT_PUBLIC_SALEOR_API_URL` spustit `pnpm run generate`.
 
 ---
 
+## Agentic Commerce Protocols (ACP + UCP)
+
+Dva protokoly umožňující AI agentům (ChatGPT, Google Gemini) nakupovat programaticky.
+PRD: `saleor-agent-first-prd.md`
+
+### Stav implementace
+
+| Fáze | Stav | Popis |
+|------|------|-------|
+| Phase 1: Foundation | ✅ Hotovo | Shared utils, typy, UCP profil, ACP feed |
+| Phase 2: UCP checkout (REST) | 🔲 Plánováno | create/get/update/complete checkout |
+| Phase 3: ACP checkout | 🔲 Plánováno | ACP checkout + Stripe payment token |
+| Phase 4: UCP extensions + MCP | 🔲 Plánováno | Fulfillment, discount, MCP binding |
+| Phase 5: Order management | 🔲 Plánováno | Webhooky, order tracking |
+
+### Struktura kódu
+
+```
+src/lib/protocols/
+├── shared/
+│   ├── types.ts          — Shared types (ProtocolMoney, ProtocolAddress, CheckoutStatus)
+│   ├── money.ts          — Currency minor units conversion (toMinorUnits/fromMinorUnits)
+│   ├── address.ts        — Address format normalization (Saleor ↔ protocol)
+│   └── auth.ts           — Agent API key validation + UCP-Agent header
+├── acp/
+│   ├── types.ts          — ACP types (AcpProduct, AcpCheckoutSession)
+│   └── product-mapper.ts — Saleor product → ACP feed format
+└── ucp/
+    ├── types.ts          — UCP types (UcpProfile, UcpCapability)
+    └── profile-builder.ts — Generates /.well-known/ucp profile
+```
+
+### Endpointy
+
+| Endpoint | Protokol | Popis |
+|----------|----------|-------|
+| `GET /.well-known/ucp` | UCP | Business profile (discovery) |
+| `GET /api/acp/products/feed` | ACP | Product feed pro OpenAI |
+| `GET /api/products/feed.json` | — | Existující feed (lidský formát) |
+| `POST /mcp` | MCP | Existující read-only MCP server |
+
+### Env variables (protocols)
+
+```env
+ACP_ENABLED=false                    # Zapnout ACP endpointy
+ACP_API_KEY=                         # API klíč pro OpenAI
+UCP_ENABLED=false                    # Zapnout UCP endpointy
+UCP_VERSION=2026-01-23               # Verze UCP spec
+STRIPE_PUBLISHABLE_KEY=              # Pro UCP payment handler
+AGENT_API_KEYS=                      # Čárkou oddělené API klíče pro agenty
+```
+
+### Pravidla pro protocols vrstvu
+
+1. **Používej `saleorQuery` pattern** — lightweight raw GraphQL, bez codegen
+2. **Minor units** — oba protokoly používají centy, Saleor decimální. Vždy konvertuj přes `toMinorUnits()`
+3. **Feature flags** — `ACP_ENABLED`/`UCP_ENABLED` kontrolují dostupnost endpointů
+4. **Auth** — `validateAgentApiKey()` z `shared/auth.ts` pro všechny mutační endpointy
+5. **NEEXPONUJ admin mutations** — protokoly jsou pro nákup, ne pro správu produktů
+
+---
+
 ## Pravidla pro AI agenty pracující s touto šablonou
 
 ### Architektura — co NEDĚLAT
