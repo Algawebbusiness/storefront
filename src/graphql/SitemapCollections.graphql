@@ -1,0 +1,9 @@
+query SitemapCollections($channel: String!, $first: Int!) {
+	collections(channel: $channel, first: $first) {
+		edges {
+			node {
+				slug
+			}
+		}
+	}
+}

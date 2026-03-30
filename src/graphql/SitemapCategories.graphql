@@ -1,0 +1,9 @@
+query SitemapCategories($first: Int!) {
+	categories(first: $first) {
+		edges {
+			node {
+				slug
+			}
+		}
+	}
+}

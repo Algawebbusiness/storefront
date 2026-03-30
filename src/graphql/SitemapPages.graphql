@@ -1,0 +1,9 @@
+query SitemapPages($first: Int!) {
+	pages(first: $first) {
+		edges {
+			node {
+				slug
+			}
+		}
+	}
+}

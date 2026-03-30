@@ -1,0 +1,20 @@
+query AllCategories($first: Int!, $channel: String!) {
+	categories(first: $first) {
+		edges {
+			node {
+				id
+				name
+				slug
+				description
+				parent {
+					id
+					name
+					slug
+				}
+				products(channel: $channel, first: 0) {
+					totalCount
+				}
+			}
+		}
+	}
+}

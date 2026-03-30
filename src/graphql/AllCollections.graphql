@@ -1,0 +1,19 @@
+query AllCollections($channel: String!, $first: Int!) {
+	collections(channel: $channel, first: $first) {
+		edges {
+			node {
+				id
+				name
+				slug
+				description
+				backgroundImage {
+					url
+					alt
+				}
+				products(first: 0) {
+					totalCount
+				}
+			}
+		}
+	}
+}
