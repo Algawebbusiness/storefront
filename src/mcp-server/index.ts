@@ -4,14 +4,15 @@ import { registerCategoryTools } from "./tools/categories.js";
 import { registerProductTools } from "./tools/products.js";
 import { registerCollectionTools } from "./tools/collections.js";
 import { registerStoreInfoTools } from "./tools/store-info.js";
+import { registerCheckoutTools } from "./tools/checkout.js";
 
 /**
- * Public read-only MCP server for the Saleor storefront.
+ * MCP server for the Saleor storefront.
  *
- * Exposes 7 tools for AI agents to browse and search products
- * without parsing HTML. No authentication required.
+ * Exposes 12 tools for AI agents: 7 public read-only tools for
+ * browsing/searching, and 5 authenticated checkout tools for purchasing.
  *
- * Tools:
+ * Read-only tools (no auth):
  * - search_products — text search across products
  * - list_categories — category tree with product counts
  * - get_category_products — products in a specific category
@@ -19,6 +20,13 @@ import { registerStoreInfoTools } from "./tools/store-info.js";
  * - compare_products — side-by-side product comparison
  * - get_collections — list all collections
  * - get_store_info — store name, contact, policies
+ *
+ * Checkout tools (require api_key parameter):
+ * - create_checkout — create checkout with line items
+ * - get_checkout — get checkout state
+ * - update_checkout — update email, addresses, shipping, promo
+ * - complete_checkout — process payment and finalize order
+ * - cancel_checkout — cancel a checkout session
  */
 export function createMcpServer(): McpServer {
 	const server = new McpServer({
@@ -31,6 +39,7 @@ export function createMcpServer(): McpServer {
 	registerProductTools(server);
 	registerCollectionTools(server);
 	registerStoreInfoTools(server);
+	registerCheckoutTools(server);
 
 	return server;
 }
