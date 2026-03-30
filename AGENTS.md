@@ -83,8 +83,15 @@ src/
 │   ├── nav/                # Navigation
 │   └── ui/                 # Base primitives (Button, Badge, etc.)
 ├── lib/                    # Utilities
-│   ├── seo/                # SEO helpers
+│   ├── seo/                # SEO helpers (JSON-LD, metadata)
+│   ├── protocols/          # ACP + UCP agentic commerce protocols
+│   │   ├── shared/         # Money, address, auth utilities
+│   │   ├── acp/            # ACP types + product mapper
+│   │   └── ucp/            # UCP types + profile builder
 │   └── search/             # Search abstraction
+├── mcp-server/             # MCP server (7 read-only tools)
+├── i18n/                   # next-intl config (cs/en)
+├── messages/               # Translation files (cs.json, en.json)
 └── styles/brand.css        # Design tokens (CSS variables)
 ```
 

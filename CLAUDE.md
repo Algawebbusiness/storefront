@@ -385,6 +385,15 @@ Dále existuje `AGENTS.md` v rootu repozitáře — architektonický přehled pr
 
 ---
 
+## Saleor instance (testovací)
+
+- **API URL:** `https://saleor-core.sliplane.app/graphql/`
+- **Channel:** `default-channel` (ověřit přes Saleor Dashboard)
+- **Hosting:** Sliplane (Docker)
+- **GraphQL codegen:** ✅ Funguje — `pnpm run generate:all` generuje typy z API
+
+---
+
 ## Prostředí a příkazy
 
 ```bash
@@ -485,18 +494,21 @@ npx create-payload-app@latest
 
 ## Implementované české features (stav: březen 2026)
 
-### 1. Lokalizace (next-intl) — ROZPRACOVÁNO
+### 1. Lokalizace (next-intl) — INTEGROVÁNO
 
-**Stav:** next-intl je nainstalovaný v node_modules (ale CHYBÍ v package.json!) a je částečně integrovaný. Integrace do Next.js layout NENÍ kompletní.
+**Stav:** next-intl v4.8.3 je plně integrován do Next.js pipeline. Zbývá postupná migrace UI komponent na překlady.
 
-**Co existuje a funguje:**
+**Infrastruktura (✅ hotovo):**
 ```
+next.config.js              — createNextIntlPlugin wrapper
 src/i18n/config.ts          — Locale type ['cs', 'en'], default 'cs'
 src/i18n/request.ts         — getRequestConfig() s cookie-based detection
+src/app/layout.tsx           — async, getLocale() pro dynamický <html lang>
 src/middleware.ts            — Sets NEXT_LOCALE cookie (Accept-Language detection)
+src/config/locale.ts        — Locale mapa cs/en s getLocaleConfig(), default cs-CZ
 src/messages/cs.json        — ~360 řádků českých překladů
 src/messages/en.json        — ~360 řádků anglických překladů
-src/ui/components/locale-switcher.tsx — CZ/EN přepínač (cookie-based, router.refresh)
+src/ui/components/locale-switcher.tsx — CZ/EN přepínač
 ```
 
 **Komponenty, které POUŽÍVAJÍ next-intl:**
@@ -504,14 +516,10 @@ src/ui/components/locale-switcher.tsx — CZ/EN přepínač (cookie-based, route
 - `src/checkout/components/address-form/czech-business-fields.tsx` — `useTranslations("checkout")` + `useTranslations("common")`
 - `src/ui/components/locale-switcher.tsx` — `useLocale()`
 
-**Co CHYBÍ pro plnou funkčnost:**
-- [ ] `next-intl` v package.json (je jen v node_modules, musí se přidat jako dependency)
-- [ ] `next.config.js` — chybí `createNextIntlPlugin` wrapper
-- [ ] `src/app/layout.tsx` — chybí `NextIntlClientProvider`, `getLocale()`, `getMessages()`
-- [ ] `src/config/locale.ts` — je hardcoded na en-US, neimportuje z `@/i18n/config`
-- [ ] Většina UI komponent NEPOUŽÍVÁ překlady — stále mají hardcoded anglické texty
+**Co zbývá:**
+- [ ] Postupná migrace UI komponent na překlady (většina má hardcoded anglické texty)
 
-**Pattern pro Server Components (po dokončení integrace):**
+**Pattern pro Server Components:**
 ```tsx
 import { getTranslations } from "next-intl/server";
 const t = await getTranslations("namespace");
@@ -578,16 +586,14 @@ src/lib/seo/json-ld.ts      — buildProductJsonLd() + jsonLdScriptProps() helpe
 src/lib/seo/index.ts         — Re-exporty builderů
 ```
 
-**Dostupné buildery:**
+**Dostupné buildery (5):**
 | Builder | Schema.org typ | Použito na |
 |---------|---------------|------------|
 | `buildProductJsonLd()` | Product (s Offer/AggregateOffer) | Produktová stránka |
-
-**Chybějící buildery (plánované, zatím neimplementované):**
-- [ ] `buildBreadcrumbListJsonLd()` — BreadcrumbList pro produkt, kategorie, kolekce
-- [ ] `buildOrganizationJsonLd()` — Organization pro homepage
-- [ ] `buildWebSiteJsonLd()` — WebSite + SearchAction pro homepage
-- [ ] `buildCollectionPageJsonLd()` — CollectionPage + ItemList pro kategorie, kolekce
+| `buildBreadcrumbListJsonLd()` | BreadcrumbList | Produkt, kategorie, kolekce |
+| `buildOrganizationJsonLd()` | Organization | Homepage |
+| `buildWebSiteJsonLd(channel)` | WebSite + SearchAction | Homepage |
+| `buildCollectionPageJsonLd()` | CollectionPage + ItemList | Připraveno pro kategorie, kolekce |
 
 **Pattern pro použití:**
 ```tsx
@@ -652,12 +658,12 @@ curl -X POST http://localhost:3000/mcp \
 - `titleTemplate` — "%s | Store Name"
 - `social.twitter`, `social.instagram`, `social.facebook` — sociální sítě (vše `null`)
 
-**Chybějící pole (plánovaná, zatím nepřidaná):**
-- [ ] `logoUrl` — cesta k logu (pro Organization JSON-LD)
-- [ ] `contactPhone` — telefon (pro Organization JSON-LD + llms.txt)
-- [ ] `contactEmail` — email (pro Organization JSON-LD + llms.txt)
+**SEO pole (✅ přidáno):**
+- `logoUrl` — cesta k logu, default `"/logo.svg"` (pro Organization JSON-LD)
+- `contactPhone` — telefon, default `null` (pro Organization JSON-LD + llms.txt)
+- `contactEmail` — email, default `null` (pro Organization JSON-LD + llms.txt)
 
-**PRAVIDLO:** Při onboardingu nového klienta VŽDY vyplnit hodnoty v brand.ts a přidat chybějící pole.
+**PRAVIDLO:** Při onboardingu nového klienta VŽDY vyplnit VŠECHNA pole v brand.ts.
 
 ### 6. Nové GraphQL queries
 
