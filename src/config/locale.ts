@@ -3,12 +3,13 @@
  */
 
 import { type Locale, defaultLocale } from "@/i18n/config";
+import { type LanguageCodeEnum } from "@/checkout/graphql";
 
 type LocaleSettings = {
 	/** Locale for Intl APIs (number/date formatting) - BCP 47 format */
 	default: string;
 	/** Language code for Saleor API - controls translated content */
-	graphqlLanguageCode: string;
+	graphqlLanguageCode: LanguageCodeEnum;
 	/** HTML lang attribute */
 	htmlLang: string;
 	/** Open Graph locale */

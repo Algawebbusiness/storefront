@@ -82,7 +82,7 @@ export const ZasilkovnaWidget: FC<ZasilkovnaWidgetProps> = ({ apiKey, onPointSel
 				</div>
 			)}
 
-			<Button type="button" variant="outline" onClick={handlePickPoint} className="w-full">
+			<Button type="button" variant="outline-solid" onClick={handlePickPoint} className="w-full">
 				<MapPin className="mr-2 h-4 w-4" />
 				{selectedPoint ? t("changePickupPoint") : t("choosePickupPoint")}
 			</Button>

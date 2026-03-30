@@ -37,3 +37,35 @@ interface JSON {
 interface Set<T> {
 	has(value: unknown): value is T;
 }
+
+/** Packeta (Zásilkovna) pickup point data returned by the widget */
+interface PacketaPoint {
+	id: number;
+	name: string;
+	nameStreet: string;
+	city: string;
+	zip: string;
+	street: string;
+	place: string;
+	country: string;
+	currency: string;
+	url: string;
+	photo: string[];
+	openingHours: Record<string, string>;
+	claimAssistant: boolean;
+	packetConsignment: boolean;
+	latitude: number;
+	longitude: number;
+}
+
+interface Window {
+	Packeta?: {
+		Widget: {
+			pick(
+				apiKey: string,
+				callback: (point: PacketaPoint | null) => void,
+				options?: { country?: string; language?: string },
+			): void;
+		};
+	};
+}
