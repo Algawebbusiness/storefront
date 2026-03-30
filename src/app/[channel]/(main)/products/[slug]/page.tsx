@@ -8,7 +8,7 @@ import xss from "xss";
 
 import { executePublicGraphQL } from "@/lib/graphql";
 import { ProductDetailsDocument, type ProductDetailsQuery } from "@/gql/graphql";
-import { buildPageMetadata, buildProductJsonLd } from "@/lib/seo";
+import { buildPageMetadata, buildProductJsonLd, buildBreadcrumbListJsonLd } from "@/lib/seo";
 import { Breadcrumbs } from "@/ui/components/breadcrumbs";
 import {
 	ProductGallery,
@@ -154,6 +154,10 @@ async function ProductContent({
 
 	const lcpImageUrl = images[0]?.url;
 
+	const breadcrumbJsonLd = buildBreadcrumbListJsonLd(
+		breadcrumbs.map((b) => ({ name: b.label, url: "href" in b ? (b.href as string) : undefined })),
+	);
+
 	return (
 		<div className="flex min-h-screen flex-col bg-background">
 			{lcpImageUrl && <link rel="preload" as="image" href={lcpImageUrl} fetchPriority="high" />}
@@ -162,6 +166,12 @@ async function ProductContent({
 				<script
 					type="application/ld+json"
 					dangerouslySetInnerHTML={{ __html: JSON.stringify(productJsonLd) }}
+				/>
+			)}
+			{breadcrumbJsonLd && (
+				<script
+					type="application/ld+json"
+					dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
 				/>
 			)}
 

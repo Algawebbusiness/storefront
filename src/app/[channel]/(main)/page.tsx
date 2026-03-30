@@ -2,12 +2,13 @@ import { Suspense } from "react";
 import { cacheLife, cacheTag } from "next/cache";
 import { ProductListByCollectionDocument, ProductOrderField, OrderDirection } from "@/gql/graphql";
 import { executePublicGraphQL } from "@/lib/graphql";
+import { buildOrganizationJsonLd, buildWebSiteJsonLd } from "@/lib/seo";
+import { brandConfig } from "@/config/brand";
 import { ProductList } from "@/ui/components/product-list";
 
 export const metadata = {
-	title: "ACME Storefront, powered by Saleor & Next.js",
-	description:
-		"Storefront Next.js Example for building performant e-commerce experiences with Saleor - the composable, headless commerce platform for global brands.",
+	title: brandConfig.siteName,
+	description: brandConfig.description,
 };
 
 /**
@@ -44,9 +45,25 @@ async function getFeaturedProducts(channel: string) {
  * The async product grid streams inside its own Suspense boundary
  * so it doesn't rely on the layout's main Suspense for reconciliation.
  */
-export default function Page(props: { params: Promise<{ channel: string }> }) {
+export default async function Page(props: { params: Promise<{ channel: string }> }) {
+	const { channel } = await props.params;
+	const organizationJsonLd = buildOrganizationJsonLd();
+	const webSiteJsonLd = buildWebSiteJsonLd(channel);
+
 	return (
 		<section className="mx-auto max-w-7xl p-8 pb-16">
+			{organizationJsonLd && (
+				<script
+					type="application/ld+json"
+					dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }}
+				/>
+			)}
+			{webSiteJsonLd && (
+				<script
+					type="application/ld+json"
+					dangerouslySetInnerHTML={{ __html: JSON.stringify(webSiteJsonLd) }}
+				/>
+			)}
 			<h2 className="sr-only">Product list</h2>
 			<Suspense
 				fallback={

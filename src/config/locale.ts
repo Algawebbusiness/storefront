@@ -2,52 +2,74 @@
  * Locale settings for display formatting. Currency comes from Saleor channels, not here.
  */
 
-export const localeConfig = {
+import { type Locale, defaultLocale } from "@/i18n/config";
+
+type LocaleSettings = {
 	/** Locale for Intl APIs (number/date formatting) - BCP 47 format */
-	default: "en-US",
-
+	default: string;
 	/** Language code for Saleor API - controls translated content */
-	graphqlLanguageCode: "EN_US" as const,
-
+	graphqlLanguageCode: string;
 	/** HTML lang attribute */
-	htmlLang: "en",
-
+	htmlLang: string;
 	/** Open Graph locale */
-	ogLocale: "en_US",
+	ogLocale: string;
+	/** Fallback currency when API returns null */
+	fallbackCurrency: string;
+};
 
-	/** Available locales (for future i18n) */
-	available: ["en-US"] as const,
-
-	/**
-	 * Fallback currency - ONLY used when API returns null (shouldn't happen).
-	 * Real currency comes from the channel via Saleor API.
-	 */
-	fallbackCurrency: "USD",
-} as const;
+const localeMap: Record<Locale, LocaleSettings> = {
+	cs: {
+		default: "cs-CZ",
+		graphqlLanguageCode: "CS_CZ",
+		htmlLang: "cs",
+		ogLocale: "cs_CZ",
+		fallbackCurrency: "CZK",
+	},
+	en: {
+		default: "en-US",
+		graphqlLanguageCode: "EN_US",
+		htmlLang: "en",
+		ogLocale: "en_US",
+		fallbackCurrency: "USD",
+	},
+};
 
 /**
- * Format a price with the configured locale.
+ * Get locale-specific config for a given locale.
  */
-export function formatPrice(amount: number, currency: string): string {
-	return new Intl.NumberFormat(localeConfig.default, {
+export function getLocaleConfig(locale: Locale): LocaleSettings {
+	return localeMap[locale] ?? localeMap[defaultLocale];
+}
+
+/**
+ * Default locale config — uses the template's default locale (cs).
+ * Existing code importing `localeConfig` continues to work unchanged.
+ */
+export const localeConfig = localeMap[defaultLocale];
+
+/**
+ * Format a price with the given or default locale.
+ */
+export function formatPrice(amount: number, currency: string, locale?: string): string {
+	return new Intl.NumberFormat(locale ?? localeConfig.default, {
 		style: "currency",
 		currency: currency,
 	}).format(amount);
 }
 
 /**
- * Format a date with the configured locale.
+ * Format a date with the given or default locale.
  */
-export function formatDate(date: Date | number, options?: Intl.DateTimeFormatOptions): string {
-	return new Intl.DateTimeFormat(localeConfig.default, {
+export function formatDate(date: Date | number, options?: Intl.DateTimeFormatOptions, locale?: string): string {
+	return new Intl.DateTimeFormat(locale ?? localeConfig.default, {
 		dateStyle: "medium",
 		...options,
 	}).format(date);
 }
 
 /**
- * Format a number with the configured locale.
+ * Format a number with the given or default locale.
  */
-export function formatNumber(value: number, options?: Intl.NumberFormatOptions): string {
-	return new Intl.NumberFormat(localeConfig.default, options).format(value);
+export function formatNumber(value: number, options?: Intl.NumberFormatOptions, locale?: string): string {
+	return new Intl.NumberFormat(locale ?? localeConfig.default, options).format(value);
 }

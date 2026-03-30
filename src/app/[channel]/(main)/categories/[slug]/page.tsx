@@ -6,6 +6,7 @@ import { ProductListByCategoryDocument } from "@/gql/graphql";
 import { executePublicGraphQL } from "@/lib/graphql";
 import { getPaginatedListVariables } from "@/lib/utils";
 import { parseEditorJSToText } from "@/lib/editorjs";
+import { buildBreadcrumbListJsonLd } from "@/lib/seo";
 import { CategoryHero, transformToProductCard } from "@/ui/components/plp";
 import { buildSortVariables, buildFilterVariables } from "@/ui/components/plp/filter-utils";
 import { CategoryPageClient } from "./client";
@@ -85,8 +86,18 @@ async function CategoryContent({
 		{ label: category.name, href: `/${params.channel}/categories/${params.slug}` },
 	];
 
+	const breadcrumbJsonLd = buildBreadcrumbListJsonLd(
+		breadcrumbs.map((b) => ({ name: b.label, url: b.href })),
+	);
+
 	return (
 		<>
+			{breadcrumbJsonLd && (
+				<script
+					type="application/ld+json"
+					dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+				/>
+			)}
 			<CategoryHero
 				title={category.name}
 				description={plainDescription}

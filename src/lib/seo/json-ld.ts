@@ -1,5 +1,13 @@
-import { type WithContext, type Product } from "schema-dts";
+import {
+	type WithContext,
+	type Product,
+	type BreadcrumbList,
+	type Organization,
+	type WebSite,
+	type CollectionPage,
+} from "schema-dts";
 import { seoConfig, getBaseUrl } from "./config";
+import { brandConfig } from "@/config/brand";
 
 /**
  * Product JSON-LD structured data builder
@@ -103,6 +111,121 @@ export function buildProductJsonLd(options: {
 						},
 					}
 				: undefined,
+	};
+}
+
+/**
+ * BreadcrumbList JSON-LD structured data builder
+ *
+ * @see https://developers.google.com/search/docs/appearance/structured-data/breadcrumb
+ */
+export function buildBreadcrumbListJsonLd(
+	items: { name: string; url?: string }[],
+): WithContext<BreadcrumbList> | null {
+	if (!seoConfig.enableJsonLd || items.length === 0) return null;
+
+	const baseUrl = getBaseUrl();
+
+	return {
+		"@context": "https://schema.org",
+		"@type": "BreadcrumbList",
+		itemListElement: items.map((item, index) => ({
+			"@type": "ListItem" as const,
+			position: index + 1,
+			name: item.name,
+			...(item.url && { item: `${baseUrl}${item.url}` }),
+		})),
+	};
+}
+
+/**
+ * Organization JSON-LD structured data builder
+ *
+ * Uses brandConfig values. Render on the homepage.
+ *
+ * @see https://developers.google.com/search/docs/appearance/structured-data/organization
+ */
+export function buildOrganizationJsonLd(): WithContext<Organization> | null {
+	if (!seoConfig.enableJsonLd) return null;
+
+	const baseUrl = getBaseUrl();
+
+	return {
+		"@context": "https://schema.org",
+		"@type": "Organization",
+		name: brandConfig.organizationName,
+		url: baseUrl,
+		logo: `${baseUrl}${brandConfig.logoUrl}`,
+		...(brandConfig.contactEmail && { email: brandConfig.contactEmail }),
+		...(brandConfig.contactPhone && { telephone: brandConfig.contactPhone }),
+		...(brandConfig.social.twitter && {
+			sameAs: [`https://twitter.com/${brandConfig.social.twitter}`],
+		}),
+	};
+}
+
+/**
+ * WebSite JSON-LD structured data builder with SearchAction
+ *
+ * Enables the sitelinks search box in Google results.
+ *
+ * @see https://developers.google.com/search/docs/appearance/structured-data/sitelinks-searchbox
+ */
+export function buildWebSiteJsonLd(channel: string): WithContext<WebSite> | null {
+	if (!seoConfig.enableJsonLd) return null;
+
+	const baseUrl = getBaseUrl();
+
+	return {
+		"@context": "https://schema.org",
+		"@type": "WebSite",
+		name: brandConfig.siteName,
+		url: baseUrl,
+		potentialAction: {
+			"@type": "SearchAction",
+			target: `${baseUrl}/${channel}/search?q={search_term_string}`,
+			"query-input": "required name=search_term_string",
+		} as unknown as import("schema-dts").SearchAction,
+	};
+}
+
+/**
+ * CollectionPage JSON-LD structured data builder
+ *
+ * For category and collection listing pages.
+ *
+ * @see https://developers.google.com/search/docs/appearance/structured-data/carousel
+ */
+export function buildCollectionPageJsonLd(options: {
+	name: string;
+	description?: string | null;
+	url: string;
+	items?: { name: string; url: string; image?: string }[];
+}): WithContext<CollectionPage> | null {
+	if (!seoConfig.enableJsonLd) return null;
+
+	const baseUrl = getBaseUrl();
+	const { name, description, url, items } = options;
+
+	return {
+		"@context": "https://schema.org",
+		"@type": "CollectionPage",
+		name,
+		...(description && { description }),
+		url: `${baseUrl}${url}`,
+		...(items &&
+			items.length > 0 && {
+				mainEntity: {
+					"@type": "ItemList",
+					itemListElement: items.map((item, index) => ({
+						"@type": "ListItem" as const,
+						position: index + 1,
+						name: item.name,
+						url: `${baseUrl}${item.url}`,
+						...(item.image && { image: item.image }),
+					})),
+				},
+			}),
 	};
 }
 

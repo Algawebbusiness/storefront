@@ -737,3 +737,70 @@ NEXT_PUBLIC_SALEOR_API_URL         // Saleor GraphQL endpoint
 NEXT_PUBLIC_DEFAULT_CHANNEL        // Channel slug
 NEXT_PUBLIC_STOREFRONT_URL         // Veřejná URL
 ```
+
+---
+
+## Startup Checklist — Nový klientský projekt
+
+Toto je **šablona**. Při kopírování pro nového klienta postupuj podle tohoto checklistu:
+
+### 1. Nastavení prostředí
+```bash
+git clone <this-repo> client-storefront
+cd client-storefront
+cp .env.example .env
+```
+
+Vyplň `.env`:
+```
+NEXT_PUBLIC_SALEOR_API_URL=https://klient.saleor.cloud/graphql/   # POVINNÉ
+NEXT_PUBLIC_DEFAULT_CHANNEL=cesky-kanal                            # POVINNÉ
+NEXT_PUBLIC_STOREFRONT_URL=https://www.klient.cz                   # Pro SEO
+SALEOR_APP_TOKEN=                                                  # Volitelné, pro multi-channel
+```
+
+### 2. Branding
+Edituj `src/config/brand.ts` — vyplň VŠECHNA pole:
+- `siteName`, `organizationName`, `defaultBrand` — název obchodu
+- `copyrightHolder` — právní subjekt
+- `tagline`, `description` — meta popisky
+- `logoUrl` — cesta k logu (relativní, např. `"/logo.svg"`)
+- `contactPhone`, `contactEmail` — pro structured data a llms.txt
+- `social.*` — sociální sítě
+- `titleTemplate` — `"%s | Název Obchodu"`
+
+### 3. Vizuální identita
+Edituj `src/styles/brand.css`:
+- `--color-primary`, `--color-secondary` — barvy (OKLCH formát)
+- Fonty, border-radius, spacing
+
+### 4. Logo a favicony
+Nahraď soubory v `public/`:
+- `logo.svg` (nebo jiný formát)
+- `favicon.ico`, `favicon-16x16.png`, `favicon-32x32.png`
+- `favicon-dark-16x16.png`, `favicon-dark-32x32.png` (tmavý režim)
+- `apple-icon.png`, `opengraph-image.png`
+
+### 5. Locale konfigurace
+Zkontroluj `src/config/locale.ts`:
+- Pro český e-shop: `default: "cs-CZ"`, `graphqlLanguageCode: "CS_CZ"`
+- Pro anglický e-shop: `default: "en-US"`, `graphqlLanguageCode: "EN_US"`
+
+### 6. Instalace a generování typů
+```bash
+pnpm install
+pnpm run generate:all    # Generuje GraphQL typy ze Saleor API
+```
+
+⚠️ `generate:all` vyžaduje funkční `NEXT_PUBLIC_SALEOR_API_URL` v `.env`!
+
+### 7. Ověření
+```bash
+pnpm dev                  # Dev server — ověř homepage, produkty, checkout
+pnpm exec tsc --noEmit    # Type check
+pnpm run build            # Produkční build
+```
+
+### 8. Deploy
+- **Cloudflare Pages**: Root `/`, build command `pnpm run build`, output `out` (s `NEXT_OUTPUT=export`) nebo `.next` (server mode)
+- **Vercel**: Automatická detekce Next.js, jen nastavit env variables

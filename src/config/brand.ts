@@ -38,6 +38,15 @@ export const brandConfig = {
 	/** Title template - %s will be replaced with page title */
 	titleTemplate: "%s | Saleor Store",
 
+	/** Logo URL for structured data (relative path) */
+	logoUrl: "/logo.svg",
+
+	/** Contact phone for structured data and llms.txt (E.164 format recommended) */
+	contactPhone: null as string | null,
+
+	/** Contact email for structured data and llms.txt */
+	contactEmail: null as string | null,
+
 	/** Social media handles */
 	social: {
 		/** Twitter/X handle (without @) - set to null to disable */
