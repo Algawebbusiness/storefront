@@ -1,27 +1,12 @@
 import Link from "next/link";
 import { cacheLife, cacheTag } from "next/cache";
+import { getTranslations } from "next-intl/server";
 import { LinkWithChannel } from "../atoms/link-with-channel";
 import { ChannelSelect } from "./channel-select";
 import { ChannelsListDocument, MenuGetBySlugDocument } from "@/gql/graphql";
 import { executePublicGraphQL } from "@/lib/graphql";
 import { CopyrightText } from "./copyright-text";
 import { Logo } from "./shared/logo";
-
-// Default footer links when no CMS data is available
-const defaultFooterLinks = {
-	support: [
-		{ label: "Contact Us", href: "/contact" },
-		{ label: "FAQs", href: "/faq" },
-		{ label: "Shipping", href: "/shipping" },
-		{ label: "Returns", href: "/returns" },
-	],
-	company: [
-		{ label: "About", href: "/about" },
-		{ label: "Sustainability", href: "/sustainability" },
-		{ label: "Careers", href: "/careers" },
-		{ label: "Press", href: "/press" },
-	],
-};
 
 /** Cached channels list - rarely changes */
 async function getChannels() {
@@ -57,7 +42,7 @@ async function getFooterMenu(channel: string) {
 }
 
 export async function Footer({ channel }: { channel: string }) {
-	const [footerLinks, channels] = await Promise.all([getFooterMenu(channel), getChannels()]);
+	const [footerLinks, channels, t] = await Promise.all([getFooterMenu(channel), getChannels(), getTranslations("footer")]);
 
 	const menuItems = footerLinks?.menu?.items || [];
 
@@ -72,7 +57,7 @@ export async function Footer({ channel }: { channel: string }) {
 							<Logo className="h-7 w-auto" inverted />
 						</Link>
 						<p className="mt-4 max-w-xs text-sm leading-relaxed text-neutral-400">
-							Minimal design, maximum impact. Thoughtfully crafted essentials for everyday comfort.
+							{t("brandTagline")}
 						</p>
 					</div>
 
@@ -144,32 +129,42 @@ export async function Footer({ channel }: { channel: string }) {
 					{menuItems.length === 0 && (
 						<>
 							<div>
-								<h4 className="mb-4 text-sm font-medium text-neutral-300">Support</h4>
+								<h4 className="mb-4 text-sm font-medium text-neutral-300">{t("support")}</h4>
 								<ul className="space-y-3">
-									{defaultFooterLinks.support.map((link) => (
+									{([
+										{ key: "contactUs", href: "/contact" },
+										{ key: "faqs", href: "/faq" },
+										{ key: "shipping", href: "/shipping" },
+										{ key: "returns", href: "/returns" },
+									] as const).map((link) => (
 										<li key={link.href}>
 											<Link
 												href={link.href}
 												prefetch={false}
 												className="text-sm text-neutral-400 transition-colors hover:text-neutral-200"
 											>
-												{link.label}
+												{t(link.key)}
 											</Link>
 										</li>
 									))}
 								</ul>
 							</div>
 							<div>
-								<h4 className="mb-4 text-sm font-medium text-neutral-300">Company</h4>
+								<h4 className="mb-4 text-sm font-medium text-neutral-300">{t("company")}</h4>
 								<ul className="space-y-3">
-									{defaultFooterLinks.company.map((link) => (
+									{([
+										{ key: "about", href: "/about" },
+										{ key: "sustainability", href: "/sustainability" },
+										{ key: "careers", href: "/careers" },
+										{ key: "press", href: "/press" },
+									] as const).map((link) => (
 										<li key={link.href}>
 											<Link
 												href={link.href}
 												prefetch={false}
 												className="text-sm text-neutral-400 transition-colors hover:text-neutral-200"
 											>
-												{link.label}
+												{t(link.key)}
 											</Link>
 										</li>
 									))}
@@ -183,7 +178,7 @@ export async function Footer({ channel }: { channel: string }) {
 				{channels?.channels && (
 					<div className="mt-8 text-neutral-400">
 						<label className="flex items-center gap-2 text-sm">
-							<span>Change currency:</span>
+							<span>{t("changeCurrency")}</span>
 							<ChannelSelect channels={channels.channels} />
 						</label>
 					</div>
@@ -200,14 +195,14 @@ export async function Footer({ channel }: { channel: string }) {
 							prefetch={false}
 							className="text-xs text-neutral-500 transition-colors hover:text-neutral-300"
 						>
-							Privacy Policy
+							{t("privacyPolicy")}
 						</Link>
 						<Link
 							href="/terms"
 							prefetch={false}
 							className="text-xs text-neutral-500 transition-colors hover:text-neutral-300"
 						>
-							Terms of Service
+							{t("termsOfService")}
 						</Link>
 					</div>
 				</div>

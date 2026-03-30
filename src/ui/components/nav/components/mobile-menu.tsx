@@ -2,6 +2,7 @@
 
 import { type ReactNode, useState, createContext, useContext } from "react";
 import { Menu } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Logo } from "../../logo";
 import {
 	Sheet,
@@ -26,6 +27,7 @@ type Props = {
 
 export const MobileMenu = ({ children }: Props) => {
 	const [isOpen, setIsOpen] = useState(false);
+	const t = useTranslations("nav");
 
 	const close = () => setIsOpen(false);
 
@@ -35,13 +37,13 @@ export const MobileMenu = ({ children }: Props) => {
 				<button
 					type="button"
 					className="flex h-10 w-10 items-center justify-center rounded-md transition-colors hover:bg-accent md:hidden"
-					aria-label="Open menu"
+					aria-label={t("openMenu")}
 				>
 					<Menu className="h-5 w-5" />
 				</button>
 			</SheetTrigger>
 			<SheetContent side="left" className="flex w-full flex-col p-0 sm:max-w-sm">
-				<SheetTitle className="sr-only">Navigation menu</SheetTitle>
+				<SheetTitle className="sr-only">{t("navigationMenu")}</SheetTitle>
 				<SheetHeader className="justify-between border-b border-border px-4 py-4">
 					<Logo />
 					<SheetCloseButton className="static" />

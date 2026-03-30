@@ -36,7 +36,9 @@
 		"orders": "Objednávky",
 		"addresses": "Adresy",
 		"settings": "Nastavení",
-		"signOut": "Odhlásit se"
+		"signOut": "Odhlásit se",
+		"openMenu": "Otevřít menu",
+		"navigationMenu": "Navigační menu"
 	},
 	"auth": {
 		"welcomeBack": "Vítejte zpět",

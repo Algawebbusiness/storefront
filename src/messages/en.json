@@ -36,7 +36,9 @@
 		"orders": "Orders",
 		"addresses": "Addresses",
 		"settings": "Settings",
-		"signOut": "Sign out"
+		"signOut": "Sign out",
+		"openMenu": "Open menu",
+		"navigationMenu": "Navigation menu"
 	},
 	"auth": {
 		"welcomeBack": "Welcome Back",
