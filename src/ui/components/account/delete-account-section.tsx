@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useParams } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/ui/components/ui/button";
 import { requestAccountDeletion } from "@/app/[channel]/(main)/account/actions";
 
@@ -10,6 +11,8 @@ export function DeleteAccountSection() {
 	const params = useParams<{ channel: string }>();
 	const [showConfirm, setShowConfirm] = useState(false);
 	const [isPending, startTransition] = useTransition();
+	const t = useTranslations("account");
+	const tc = useTranslations("common");
 	const [error, setError] = useState("");
 	const [sent, setSent] = useState(false);
 
@@ -32,7 +35,7 @@ export function DeleteAccountSection() {
 		return (
 			<div aria-live="polite" className="rounded-lg border border-border bg-green-50 p-4">
 				<p className="text-sm text-green-800">
-					A confirmation email has been sent. Please check your inbox to complete account deletion.
+					{t("confirmationEmailSent")}
 				</p>
 			</div>
 		);
@@ -41,9 +44,9 @@ export function DeleteAccountSection() {
 	return (
 		<div className="space-y-3">
 			<div>
-				<p className="text-sm font-medium text-destructive">Delete account</p>
+				<p className="text-sm font-medium text-destructive">{t("deleteAccount")}</p>
 				<p className="text-sm text-muted-foreground">
-					Permanently remove your account and all associated data.
+					{t("deleteAccountDescription")}
 				</p>
 			</div>
 
@@ -55,22 +58,21 @@ export function DeleteAccountSection() {
 
 			{!showConfirm ? (
 				<Button variant="destructive" size="sm" onClick={() => setShowConfirm(true)}>
-					Delete account
+					{t("deleteAccount")}
 				</Button>
 			) : (
 				<div className="border-destructive/20 bg-destructive/5 flex items-start gap-3 rounded-lg border p-4">
 					<AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
 					<div className="space-y-3">
 						<p className="text-sm">
-							This action cannot be undone. You will receive a confirmation email before your account is
-							deleted.
+							{t("deleteConfirmDescription")}
 						</p>
 						<div className="flex gap-2">
 							<Button variant="destructive" size="sm" onClick={handleDelete} disabled={isPending}>
-								{isPending ? "Sending…" : "Yes, delete my account"}
+								{isPending ? t("sending") : t("yesDeleteAccount")}
 							</Button>
 							<Button variant="ghost" size="sm" onClick={() => setShowConfirm(false)}>
-								Cancel
+								{tc("cancel")}
 							</Button>
 						</div>
 					</div>
