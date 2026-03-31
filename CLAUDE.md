@@ -524,11 +524,18 @@ src/ui/components/locale-switcher.tsx — CZ/EN přepínač
 - `checkout/address-form/czech-business-fields.tsx` — `useTranslations("checkout")`
 - `locale-switcher.tsx` — `useLocale()`
 
+**Další migrované komponenty:**
+- `account/account-nav.tsx` — `useTranslations("nav")` (nav labels, back to store, sign out)
+- `account/change-password-form.tsx` — `useTranslations("account"/"auth"/"common")`
+- `account/page.tsx` — `getTranslations("account"/"common")` (welcome, orders, address)
+- `search/page.tsx` — `getTranslations("search")` (results, empty state)
+- `products/page.tsx` — `getTranslations("product")` (breadcrumbs, hero)
+- `cart/page.tsx` — `getTranslations("cart")` (empty state, totals)
+
 **Co zbývá (nižší priorita):**
-- [ ] Account stránky (profil, adresy, objednávky)
-- [ ] PLP komponenty (filter-bar, product-card)
-- [ ] Search results page
-- [ ] Stránky (login/page.tsx, signup/page.tsx, cart/page.tsx)
+- [ ] PLP filter-bar (complex, lots of sort/filter labels)
+- [ ] Account: edit-name-form, delete-account-section
+- [ ] Product card labels (minimal text)
 
 **Pattern pro Server Components:**
 ```tsx
