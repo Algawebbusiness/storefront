@@ -72,7 +72,8 @@ src/
 ├── app/                    # Next.js App Router pages
 │   ├── [channel]/          # Channel-scoped routes
 │   │   └── (main)/         # Main layout (header/footer)
-│   ├── api/                # API routes (og/, revalidate/)
+│   ├── api/                # API routes (og/, revalidate/, acp/, ucp/, webhooks/)
+│   ├── oauth/              # OAuth2 Authorization Server (authorize, token, userinfo, revoke)
 │   └── checkout/           # Checkout flow
 ├── graphql/                # GraphQL queries (run `pnpm run generate` after changes)
 ├── gql/                    # AUTO-GENERATED - Do not edit (storefront types)
@@ -84,12 +85,13 @@ src/
 │   └── ui/                 # Base primitives (Button, Badge, etc.)
 ├── lib/                    # Utilities
 │   ├── seo/                # SEO helpers (JSON-LD, metadata)
+│   ├── oauth/              # OAuth2 library (JWT, PKCE, codes, client registry)
 │   ├── protocols/          # ACP + UCP agentic commerce protocols
-│   │   ├── shared/         # Money, address, auth utilities
+│   │   ├── shared/         # Money, address, auth, checkout mapper, order mapper
 │   │   ├── acp/            # ACP types + product mapper
-│   │   └── ucp/            # UCP types + profile builder
+│   │   └── ucp/            # UCP types + profile builder + capabilities
 │   └── search/             # Search abstraction
-├── mcp-server/             # MCP server (7 read-only tools)
+├── mcp-server/             # MCP server (12 tools: 7 read-only + 5 checkout)
 ├── i18n/                   # next-intl config (cs/en)
 ├── messages/               # Translation files (cs.json, en.json)
 └── styles/brand.css        # Design tokens (CSS variables)
@@ -120,6 +122,22 @@ NEXT_PUBLIC_DEFAULT_CHANNEL=       # Your Saleor channel slug (e.g., "default-ch
 
 # Multi-channel builds (optional) - discovers additional channels at build time
 # SALEOR_APP_TOKEN=                # If set, fetches all active channels from API
+
+# Note: Product pages are NOT pre-rendered (all on-demand via ISR) due to Cache Components limitations
+
+# Agentic Commerce Protocols (optional)
+ACP_ENABLED=false                    # Enable ACP endpoints (OpenAI/ChatGPT)
+# ACP_API_KEY=                       # API key for ACP requests
+UCP_ENABLED=false                    # Enable UCP endpoints (Google/Gemini)
+# STRIPE_PUBLISHABLE_KEY=            # For UCP payment handler
+# AGENT_API_KEYS=                    # Comma-separated API keys for agent access
+# SALEOR_WEBHOOK_SECRET=             # HMAC secret for Saleor webhook verification
+
+# OAuth2 Authorization Server (for customer-scoped agent access)
+# OAUTH_JWT_SECRET=                  # Min 32 chars, for signing JWTs (REQUIRED for OAuth)
+# OAUTH_CLIENTS=                     # Client registry: id:secret_hash:redirect_uri
+# OAUTH_ACCESS_TOKEN_TTL=3600        # Access token lifetime in seconds (default: 1h)
+# OAUTH_REFRESH_TOKEN_TTL=2592000    # Refresh token lifetime in seconds (default: 30d)
 
 # Note: Product pages are NOT pre-rendered (all on-demand via ISR) due to Cache Components limitations
 ```
