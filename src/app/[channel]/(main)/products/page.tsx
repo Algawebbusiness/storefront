@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import { ProductListPaginatedDocument } from "@/gql/graphql";
 import { executePublicGraphQL } from "@/lib/graphql";
 import { getPaginatedListVariables } from "@/lib/utils";
@@ -32,18 +33,19 @@ type PageProps = {
  */
 export default async function Page(props: PageProps) {
 	const params = await props.params;
+	const t = await getTranslations("product");
 
 	const breadcrumbs = [
-		{ label: "Home", href: `/${params.channel}` },
-		{ label: "Products", href: `/${params.channel}/products` },
+		{ label: t("home"), href: `/${params.channel}` },
+		{ label: t("products"), href: `/${params.channel}/products` },
 	];
 
 	return (
 		<>
 			{/* Static shell - renders immediately */}
 			<CategoryHero
-				title="All Products"
-				description="Discover our full collection of premium products."
+				title={t("allProducts")}
+				description={t("allProductsDescription")}
 				breadcrumbs={breadcrumbs}
 			/>
 			{/* Dynamic content - streams in via Suspense */}

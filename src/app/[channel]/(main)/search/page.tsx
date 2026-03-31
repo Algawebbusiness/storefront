@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 import { searchProducts } from "@/lib/search";
 import { SearchResults } from "@/ui/components/search-results";
 import { Pagination } from "@/ui/components/pagination";
@@ -86,6 +87,7 @@ async function SearchContent({
 	});
 
 	const { products, pagination } = result;
+	const t = await getTranslations("search");
 
 	if (pagination.totalCount === 0) {
 		return <EmptyState query={query} channel={params.channel} />;
@@ -96,9 +98,9 @@ async function SearchContent({
 			{/* Header with count and sort */}
 			<div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 				<div>
-					<h1 className="text-2xl font-semibold">Results for &quot;{query}&quot;</h1>
+					<h1 className="text-2xl font-semibold">{t("resultsFor", { query })}</h1>
 					<p className="mt-1 text-sm text-muted-foreground">
-						{pagination.totalCount} {pagination.totalCount === 1 ? "product" : "products"} found
+						{t("productsFound", { count: pagination.totalCount })}
 					</p>
 				</div>
 				<SearchSort />
@@ -151,29 +153,30 @@ function SearchSkeleton() {
 	);
 }
 
-function EmptyState({ query, channel }: { query: string; channel: string }) {
+async function EmptyState({ query, channel }: { query: string; channel: string }) {
+	const t = await getTranslations("search");
+
 	return (
 		<div className="flex flex-col items-center justify-center py-16 text-center">
 			<div className="mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-muted">
 				<SearchIcon className="h-8 w-8 text-muted-foreground" />
 			</div>
-			<h1 className="text-2xl font-semibold">No results for &quot;{query}&quot;</h1>
+			<h1 className="text-2xl font-semibold">{t("noResults", { query })}</h1>
 			<p className="mt-2 max-w-md text-muted-foreground">
-				We couldn&apos;t find any products matching your search. Try a different term or browse our
-				categories.
+				{t("noResultsDescription")}
 			</p>
 			<div className="mt-8 flex flex-col gap-3 sm:flex-row">
 				<Link
 					href={`/${channel}/products`}
 					className="hover:bg-primary/90 inline-flex items-center justify-center rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-colors"
 				>
-					Browse All Products
+					{t("browseAll")}
 				</Link>
 				<Link
 					href={`/${channel}`}
 					className="inline-flex items-center justify-center rounded-lg border border-border bg-background px-6 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted"
 				>
-					Go to Homepage
+					{t("goToHomepage")}
 				</Link>
 			</div>
 		</div>
