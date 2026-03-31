@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useRef, useCallback } from "react";
 import { Lock, Eye, EyeOff } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Button } from "@/ui/components/ui/button";
 import { Input } from "@/ui/components/ui/input";
 import { Label } from "@/ui/components/ui/label";
@@ -10,6 +11,9 @@ import { changePassword } from "@/app/[channel]/(main)/account/actions";
 export function ChangePasswordForm() {
 	const [isOpen, setIsOpen] = useState(false);
 	const [isPending, startTransition] = useTransition();
+	const t = useTranslations("account");
+	const ta = useTranslations("auth");
+	const tc = useTranslations("common");
 	const [error, setError] = useState("");
 	const [success, setSuccess] = useState(false);
 	const [showOld, setShowOld] = useState(false);
@@ -45,11 +49,11 @@ export function ChangePasswordForm() {
 				<div className="flex items-center gap-2">
 					{success && (
 						<span aria-live="polite" className="text-sm text-green-600">
-							Updated
+							{t("passwordChanged")}
 						</span>
 					)}
 					<Button variant="ghost" size="sm" onClick={() => setIsOpen(true)}>
-						Change
+						{t("changePassword")}
 					</Button>
 				</div>
 			</div>
@@ -66,7 +70,7 @@ export function ChangePasswordForm() {
 			)}
 
 			<div className="space-y-1.5">
-				<Label htmlFor="oldPassword">Current password</Label>
+				<Label htmlFor="oldPassword">{t("currentPassword")}</Label>
 				<div className="relative">
 					<Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 					<Input
@@ -80,7 +84,7 @@ export function ChangePasswordForm() {
 					<button
 						type="button"
 						onClick={() => setShowOld(!showOld)}
-						aria-label={showOld ? "Hide password" : "Show password"}
+						aria-label={showOld ? ta("hidePassword") : ta("showPassword")}
 						className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
 					>
 						{showOld ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -89,7 +93,7 @@ export function ChangePasswordForm() {
 			</div>
 
 			<div className="space-y-1.5">
-				<Label htmlFor="newPassword">New password</Label>
+				<Label htmlFor="newPassword">{t("newPassword")}</Label>
 				<div className="relative">
 					<Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 					<Input
@@ -97,7 +101,7 @@ export function ChangePasswordForm() {
 						name="newPassword"
 						type={showNew ? "text" : "password"}
 						autoComplete="new-password"
-						placeholder="At least 8 characters…"
+						placeholder={t("passwordPlaceholder")}
 						className="pl-10 pr-10"
 						minLength={8}
 						required
@@ -105,7 +109,7 @@ export function ChangePasswordForm() {
 					<button
 						type="button"
 						onClick={() => setShowNew(!showNew)}
-						aria-label={showNew ? "Hide password" : "Show password"}
+						aria-label={showNew ? ta("hidePassword") : ta("showPassword")}
 						className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
 					>
 						{showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -114,7 +118,7 @@ export function ChangePasswordForm() {
 			</div>
 
 			<div className="space-y-1.5">
-				<Label htmlFor="confirmPassword">Confirm new password</Label>
+				<Label htmlFor="confirmPassword">{t("confirmPassword")}</Label>
 				<div className="relative">
 					<Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 					<Input
@@ -131,7 +135,7 @@ export function ChangePasswordForm() {
 
 			<div className="flex gap-2">
 				<Button type="submit" size="sm" disabled={isPending}>
-					{isPending ? "Changing…" : "Change password"}
+					{isPending ? t("changingPassword") : t("changePassword")}
 				</Button>
 				<Button
 					type="button"
@@ -143,7 +147,7 @@ export function ChangePasswordForm() {
 						formRef.current?.reset();
 					}}
 				>
-					Cancel
+					{tc("cancel")}
 				</Button>
 			</div>
 		</form>
