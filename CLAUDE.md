@@ -712,7 +712,7 @@ PRD: `saleor-agent-first-prd.md`
 | Phase 2: UCP checkout (REST) | ✅ Hotovo | create/get/update/complete/cancel checkout |
 | Phase 3: ACP checkout | ✅ Hotovo | ACP checkout + Stripe payment token |
 | Phase 4: MCP checkout tools | ✅ Hotovo | 5 authenticated MCP tools (12 total) |
-| Phase 5: Order management | 🔲 Plánováno | Webhooky, order tracking |
+| Phase 5: Order management | ✅ Hotovo | Webhook handler, UCP/ACP order status |
 
 ### Struktura kódu
 
@@ -745,6 +745,9 @@ src/lib/protocols/
 | `GET/PATCH /api/acp/checkout/[id]` | ACP | Get/update session |
 | `POST /api/acp/checkout/[id]/complete` | ACP | Complete with Stripe token |
 | `GET /api/products/feed.json` | — | Existující feed (lidský formát) |
+| `GET /api/ucp/rest/orders/[id]` | UCP | Order status |
+| `GET /api/acp/orders/[id]` | ACP | Order status |
+| `POST /api/webhooks/saleor` | — | Saleor webhook handler (order events) |
 | `POST /mcp` | MCP | 12 tools (7 read-only + 5 checkout) |
 
 ### Env variables (protocols)
@@ -756,6 +759,7 @@ UCP_ENABLED=false                    # Zapnout UCP endpointy
 UCP_VERSION=2026-01-23               # Verze UCP spec
 STRIPE_PUBLISHABLE_KEY=              # Pro UCP payment handler
 AGENT_API_KEYS=                      # Čárkou oddělené API klíče pro agenty
+SALEOR_WEBHOOK_SECRET=               # HMAC secret pro verifikaci Saleor webhooků
 ```
 
 ### Pravidla pro protocols vrstvu
