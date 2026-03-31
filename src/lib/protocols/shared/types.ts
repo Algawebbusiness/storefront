@@ -73,4 +73,11 @@ export interface AgentAuthResult {
 	valid: boolean;
 	agentId?: string;
 	profileUrl?: string; // UCP agent profile URL
+	/** Present when authenticated via OAuth2 (customer-scoped) */
+	userContext?: {
+		userId: string;
+		email: string;
+		scope: string;
+		saleorToken: string;
+	};
 }

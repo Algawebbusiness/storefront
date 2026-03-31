@@ -762,6 +762,44 @@ AGENT_API_KEYS=                      # Čárkou oddělené API klíče pro agent
 SALEOR_WEBHOOK_SECRET=               # HMAC secret pro verifikaci Saleor webhooků
 ```
 
+### OAuth2 Authorization Server (Phase 6)
+
+AI agenti (ChatGPT, Gemini) se autentizují zákazníkem přes OAuth2 Authorization Code + PKCE flow.
+
+**Flow:** Agent → `/oauth/authorize` → zákazník se přihlásí → consent → redirect s auth code → `/oauth/token` → JWT access token
+
+**Endpointy:**
+| Endpoint | Metoda | Popis |
+|----------|--------|-------|
+| `/oauth/authorize` | GET (page) | Login + consent screen |
+| `/oauth/consent` | POST | Zpracování přihlášení, generování auth code |
+| `/oauth/token` | POST | Výměna code→token, refresh token rotation |
+| `/oauth/userinfo` | GET | OIDC UserInfo (profil zákazníka) |
+| `/oauth/revoke` | POST | Revokace refresh tokenu |
+
+**Knihovna (`src/lib/oauth/`):**
+- `config.ts` — Client registry z env, secret hash verification
+- `codes.ts` — Authorization code store (5min TTL, single-use)
+- `tokens.ts` — HMAC-SHA256 JWT signing/verification, token rotation
+- `pkce.ts` — PKCE S256 verification
+- `scopes.ts` — Scope definitions (profile, checkout, orders, addresses)
+- `saleor-auth.ts` — Bridge: OAuth → Saleor tokenCreate
+
+**Env variables:**
+```env
+OAUTH_JWT_SECRET=             # Min 32 znaků, pro podepisování JWT (POVINNÉ)
+OAUTH_CLIENTS=                # Registry: id:secret_hash:redirect_uri1|uri2
+OAUTH_ACCESS_TOKEN_TTL=3600   # Access token lifetime (default 1h)
+OAUTH_REFRESH_TOKEN_TTL=2592000  # Refresh token lifetime (default 30d)
+```
+
+**Bezpečnost:**
+- PKCE S256 povinné (plain odmítnuto)
+- Authorization codes: single-use, 5min TTL, vázané na client+redirect_uri
+- Client secrets jako SHA-256 hash, timing-safe porovnání
+- Refresh token rotation (single-use)
+- Redirect URI exact match proti client registry
+
 ### Pravidla pro protocols vrstvu
 
 1. **Používej `saleorQuery` pattern** — lightweight raw GraphQL, bez codegen
