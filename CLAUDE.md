@@ -4,6 +4,45 @@
 
 Jsem Jirka, provozuji **Algaweb** — českou webovou agenturu a managed hosting providera. Stavím e-shopy pro klienty na **Saleor** (headless e-commerce backend) s **Next.js** frontendem. Kóduji primárně přes AI (vibecoding). Komunikuji česky, ale technické dokumenty a kód píšu anglicky.
 
+## Prodejní kanály — co tato šablona umožňuje
+
+Šablona pokrývá **10 prodejních kanálů** z jednoho deploye, jednoho Saleor backendu.
+
+### Lidské kanály (browser)
+
+| Kanál | Popis | Implementace |
+|-------|-------|-------------|
+| **Webový eshop** | Klasický storefront — katalog, košík, checkout, zákaznický účet | Next.js App Router, Server Components, ISR caching |
+| **Mobilní web** | Responzivní design, mobile-first, PWA-ready | Tailwind CSS, touch-optimized UI |
+| **Google Search** | Rich results v Google — ceny, dostupnost, hodnocení | 5 JSON-LD builderů (Product, BreadcrumbList, Organization, WebSite, CollectionPage) |
+| **Sociální sítě** | Náhledové karty při sdílení (Facebook, Twitter, LinkedIn) | OpenGraph + Twitter Card metadata na všech stránkách |
+| **SEO / Crawlery** | Kompletní indexace pro vyhledávače | robots.txt, sitemap.xml (dynamický), canonical URLs |
+
+### AI agentové kanály (programatické)
+
+| Kanál | Popis | Implementace |
+|-------|-------|-------------|
+| **ChatGPT (ACP)** | Zákazník řekne "kup mi tohle" → ChatGPT provede checkout a platbu | ACP product feed + checkout REST API + Stripe payment tokens |
+| **Google Gemini (UCP)** | Zákazník hledá v Google AI Mode → Gemini objeví eshop a dokončí nákup | `/.well-known/ucp` profil + REST checkout + MCP binding + capability negotiation |
+| **Libovolný MCP agent** | Jakýkoli MCP-kompatibilní agent (Claude, Cursor, custom boty) | 12 MCP tools (7 read-only + 5 checkout) |
+| **LLM crawlery** | Perplexity, SearchGPT a další AI vyhledávače rozumí eshopu | `/llms.txt` manifest s popisem obchodu a odkazy na data |
+| **Strojové feedy** | Cenové srovnávače, agregátory, partnerské systémy | `/api/products/feed.json` — kompletní produktový feed |
+
+### Autentizační modely
+
+| Model | Použití | Implementace |
+|-------|---------|-------------|
+| **Guest checkout** | Zákazník bez účtu — browser i AI agent | Saleor anonymous checkout |
+| **Zákaznický účet** | Login, uložené adresy, historie objednávek | Saleor JWT auth + cookie session |
+| **OAuth2 (agent za zákazníka)** | AI agent propojí zákaznický účet → nakupuje s jeho daty | OAuth2 Authorization Code + PKCE, token rotation |
+| **API klíč (agent-level)** | Platformy (OpenAI, Google) se autentizují partnerským klíčem | Bearer token z AGENT_API_KEYS env var |
+
+### Proč je to důležité
+
+Většina eshopových šablon pokrývá jen **2 kanály** (web + mobil). Tato šablona pokrývá **10 kanálů** z jednoho codebase. Agentic commerce (ACP, UCP, MCP) je v roce 2026 v začátcích — mít to jako template-ready řešení je konkurenční výhoda pro Algaweb i pro klienty.
+
+---
+
 ## Vize: "Algaweb Portal"
 
 Budujeme platformu, kde klient spravuje celý svůj online byznys z **jednoho místa** — ideálně z jednoho chatovacího okna. Na pozadí běží více systémů, ale klient o nich neví a nepotřebuje vědět. Konkrétně:
