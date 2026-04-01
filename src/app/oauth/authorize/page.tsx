@@ -1,3 +1,4 @@
+import { getTranslations, getLocale } from "next-intl/server";
 import { getClient, validateRedirectUri } from "@/lib/oauth/config";
 import { validateScopes, parseScopes, SCOPE_DESCRIPTIONS } from "@/lib/oauth/scopes";
 import { validateCodeChallenge } from "@/lib/oauth/pkce";
@@ -93,18 +94,21 @@ export default async function AuthorizePage({
 	// ── Show error page if validation failed ──
 	// NEVER redirect to an unvalidated redirect_uri with error info
 
+	const [t, locale] = await Promise.all([getTranslations("oauth"), getLocale()]);
+	const lang = locale === "cs" ? "cs" : "en";
+
 	if (errors.length > 0) {
 		return (
 			<div className="mx-auto mt-16 w-full max-w-md">
 				<div className="rounded-lg border border-destructive/50 bg-card p-8 shadow-sm">
-					<h1 className="mb-4 text-xl font-semibold text-destructive">Authorization Error</h1>
+					<h1 className="mb-4 text-xl font-semibold text-destructive">{t("authorizationError")}</h1>
 					<ul className="space-y-2 text-sm text-muted-foreground">
 						{errors.map((err) => (
 							<li key={err}>• {err}</li>
 						))}
 					</ul>
 					<p className="mt-6 text-xs text-muted-foreground">
-						If you believe this is an error, contact the application developer.
+						{t("contactDeveloper")}
 					</p>
 				</div>
 			</div>
@@ -122,16 +126,16 @@ export default async function AuthorizePage({
 				{/* Header */}
 				<div className="mb-6 text-center">
 					<p className="mb-2 text-sm text-muted-foreground">{brandConfig.siteName}</p>
-					<h1 className="text-xl font-semibold">Authorize {clientName}</h1>
+					<h1 className="text-xl font-semibold">{t("authorize", { client: clientName })}</h1>
 					<p className="mt-2 text-sm text-muted-foreground">
-						<strong>{clientName}</strong> wants to access your account
+						{t("wantsAccess", { client: clientName })}
 					</p>
 				</div>
 
 				{/* Scope list */}
 				<div className="mb-6 rounded-md border border-border bg-secondary/30 p-4">
 					<p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-						This application will be able to:
+						{t("willBeAbleTo")}
 					</p>
 					<ul className="space-y-1.5 text-sm">
 						{scopes.map((s) => (
@@ -139,7 +143,7 @@ export default async function AuthorizePage({
 								<svg className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 									<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
 								</svg>
-								{SCOPE_DESCRIPTIONS[s].en}
+								{SCOPE_DESCRIPTIONS[s][lang]}
 							</li>
 						))}
 					</ul>
@@ -157,7 +161,7 @@ export default async function AuthorizePage({
 
 					<div className="space-y-1.5">
 						<label htmlFor="oauth-email" className="text-sm font-medium">
-							Email
+							{t("email")}
 						</label>
 						<input
 							id="oauth-email"
@@ -172,7 +176,7 @@ export default async function AuthorizePage({
 
 					<div className="space-y-1.5">
 						<label htmlFor="oauth-password" className="text-sm font-medium">
-							Password
+							{t("password")}
 						</label>
 						<input
 							id="oauth-password"
@@ -188,11 +192,11 @@ export default async function AuthorizePage({
 						type="submit"
 						className="flex h-12 w-full items-center justify-center rounded-md bg-primary text-base font-medium text-primary-foreground transition-colors hover:bg-primary/90"
 					>
-						Sign in & Authorize
+						{t("signInAuthorize")}
 					</button>
 
 					<p className="text-center text-xs text-muted-foreground">
-						By authorizing, you allow <strong>{clientName}</strong> to access the permissions listed above.
+						{t("byAuthorizing", { client: clientName })}
 					</p>
 				</form>
 			</div>

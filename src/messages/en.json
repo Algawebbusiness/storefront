@@ -374,6 +374,17 @@
 		"careers": "Careers",
 		"press": "Press"
 	},
+	"oauth": {
+		"authorizationError": "Authorization Error",
+		"contactDeveloper": "If you believe this is an error, contact the application developer.",
+		"authorize": "Authorize {client}",
+		"wantsAccess": "{client} wants to access your account",
+		"willBeAbleTo": "This application will be able to:",
+		"email": "Email",
+		"password": "Password",
+		"signInAuthorize": "Sign in & Authorize",
+		"byAuthorizing": "By authorizing, you allow {client} to access the permissions listed above."
+	},
 	"pagination": {
 		"previous": "Previous",
 		"next": "Next",

@@ -374,6 +374,17 @@
 		"careers": "Kariéra",
 		"press": "Média"
 	},
+	"oauth": {
+		"authorizationError": "Chyba autorizace",
+		"contactDeveloper": "Pokud si myslíte, že jde o chybu, kontaktujte vývojáře aplikace.",
+		"authorize": "Autorizovat {client}",
+		"wantsAccess": "{client} chce přistoupit k vašemu účtu",
+		"willBeAbleTo": "Tato aplikace bude moci:",
+		"email": "E-mail",
+		"password": "Heslo",
+		"signInAuthorize": "Přihlásit se a autorizovat",
+		"byAuthorizing": "Autorizací umožníte aplikaci {client} přístup k výše uvedeným oprávněním."
+	},
 	"pagination": {
 		"previous": "Předchozí",
 		"next": "Další",
