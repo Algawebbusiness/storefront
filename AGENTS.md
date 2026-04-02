@@ -71,7 +71,7 @@ Skills are organized in two locations:
 src/
 ├── app/                    # Next.js App Router pages
 │   ├── [channel]/          # Channel-scoped routes
-│   │   └── (main)/         # Main layout (header/footer)
+│   │   └── (main)/         # Main layout (header/footer, + blog/, pages/)
 │   ├── api/                # API routes (og/, revalidate/, acp/, ucp/, webhooks/)
 │   ├── oauth/              # OAuth2 Authorization Server (authorize, token, userinfo, revoke)
 │   └── checkout/           # Checkout flow
@@ -90,6 +90,7 @@ src/
 │   │   ├── shared/         # Money, address, auth, checkout mapper, order mapper
 │   │   ├── acp/            # ACP types + product mapper
 │   │   └── ucp/            # UCP types + profile builder + capabilities
+│   ├── payload/            # Payload CMS client (REST API, graceful degradation)
 │   └── search/             # Search abstraction
 ├── mcp-server/             # MCP server (12 tools: 7 read-only + 5 checkout)
 ├── i18n/                   # next-intl config (cs/en)
@@ -132,6 +133,10 @@ UCP_ENABLED=false                    # Enable UCP endpoints (Google/Gemini)
 # STRIPE_PUBLISHABLE_KEY=            # For UCP payment handler
 # AGENT_API_KEYS=                    # Comma-separated API keys for agent access
 # SALEOR_WEBHOOK_SECRET=             # HMAC secret for Saleor webhook verification
+
+# Payload CMS (content layer — blog, pages, product enrichment)
+# PAYLOAD_API_URL=                    # Payload REST API (e.g., https://cms.example.com/api)
+# PAYLOAD_API_KEY=                    # Payload API key for authentication
 
 # OAuth2 Authorization Server (for customer-scoped agent access)
 # OAUTH_JWT_SECRET=                  # Min 32 chars, for signing JWTs (REQUIRED for OAuth)

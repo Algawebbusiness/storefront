@@ -518,48 +518,48 @@ npx create-payload-app@latest
 
 ## Roadmapa: Jak přistupovat k novému e-shop projektu
 
-### Fáze 1: Storefront (TEĎKA — první klient)
+### Fáze 1: Storefront šablona ✅ HOTOVO
 
-1. Fork Paper → env variables pro klientův Saleor channel
-2. `brand.css` → barvy, fonty, vizuální identita klienta
-3. Channel config → nastavit český channel v Saleor Dashboard
-4. České moduly → fakturace, dopravci, platební brány
-5. Deploy → Cloudflare Pages / Vercel + webhook revalidace
-6. Test → katalog → košík → checkout → platba → profil
+1. ~~Fork Paper → env variables pro klientův Saleor channel~~
+2. ~~`brand.css` → barvy, fonty, vizuální identita klienta~~
+3. ~~České moduly → IČO/DIČ, Zásilkovna~~
+4. ~~SEO → JSON-LD, sitemap, robots, llms.txt~~
+5. ~~i18n → next-intl, 20+ komponent cs/en~~
+6. ~~Agentic commerce → ACP, UCP, MCP, OAuth2~~
+7. ~~Payload CMS integrace → blog, stránky, product enrichment~~
+8. ~~128 testů, 0 TS errors~~
 
-### Fáze 2: Payload jako content CMS (po funkčním storefrontu)
+### Fáze 2: Payload backend (PŘÍŠTÍ KROK — separátní projekt)
 
 1. Setup Payload s PostgreSQL a multi-tenant pluginem
 2. Collections: Pages, Posts, Media, Navigation, ProductEnrichment
-3. Integrace storefront ↔ Payload (paralelní fetch)
-4. Saleor CMS App pro jednosměrnou sync produktů
-5. White-label Payload admin panel
+3. Saleor CMS App pro jednosměrnou sync produktů
+4. White-label Payload admin panel
 
-### Fáze 3: Unified Portal (po ověření Payload integrace)
+### Fáze 3: Unified Portal (po ověření Payload)
 
 1. Custom React views v Payloadu pro Saleor commerce data
 2. Klient spravuje vše z jednoho admin panelu
-3. Product management, objednávky, slevy — zobrazené v Payload UI
-4. Klient nikdy nevidí Saleor Dashboard
+3. Klient nikdy nevidí Saleor Dashboard
 
 ### Fáze 4: AI Chat (po stabilním portálu)
 
 1. OpenClaw instance per klient
 2. MCP servery: Saleor + Payload + n8n
-3. Chat pro jednoduché operace (změna cen, status objednávek)
-4. Graduální rozšiřování schopností chatu
-5. Portál jako "pokročilý režim" pro vizuální editaci
+3. Chat pro jednoduché operace
 
-### Fáze 5: Scale (po ověření na 2–3 klientech)
+### Fáze 5: Scale + doplňkové feedy
 
-1. Automatizované onboarding workflow (n8n)
-2. Šablony pro různé typy e-shopů
-3. POS systém (Point of Sale) pro osobní prodej
-4. Další klienti bez nového kódu — jen konfigurace
+1. Google Merchant Center XML feed
+2. Heureka.cz, Zboží.cz XML feedy
+3. Facebook Catalog feed
+4. Comgate/GoPay platební brány
+5. PPL, Česká pošta, Balíkovna
+6. POS systém (Point of Sale)
 
 ---
 
-## Implementované české features (stav: březen 2026)
+## Implementované české features (stav: duben 2026)
 
 ### 1. Lokalizace (next-intl) — INTEGROVÁNO
 
@@ -649,7 +649,7 @@ src/checkout/components/shipping/zasilkovna-widget.tsx — widget
 
 ---
 
-## SEO & Agent-First vrstva (stav: březen 2026)
+## SEO & Agent-First vrstva (stav: duben 2026)
 
 Implementováno podle PRD v `saleor-agent-first-prd.md`. Všechny změny jsou aditivní — žádný existující kód nebyl nahrazen.
 
