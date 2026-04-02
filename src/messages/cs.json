@@ -374,6 +374,17 @@
 		"careers": "Kariéra",
 		"press": "Média"
 	},
+	"blog": {
+		"title": "Blog",
+		"subtitle": "Nejnovější články a novinky z našeho obchodu.",
+		"readMore": "Číst dále",
+		"publishedOn": "Publikováno {date}",
+		"by": "od {author}",
+		"noPosts": "Zatím žádné články.",
+		"noPostsDescription": "Zkuste se vrátit později.",
+		"backToBlog": "Zpět na blog",
+		"home": "Domů"
+	},
 	"oauth": {
 		"authorizationError": "Chyba autorizace",
 		"contactDeveloper": "Pokud si myslíte, že jde o chybu, kontaktujte vývojáře aplikace.",

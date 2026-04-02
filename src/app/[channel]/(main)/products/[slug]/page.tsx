@@ -9,6 +9,8 @@ import xss from "xss";
 import { executePublicGraphQL } from "@/lib/graphql";
 import { ProductDetailsDocument, type ProductDetailsQuery } from "@/gql/graphql";
 import { buildPageMetadata, buildProductJsonLd, buildBreadcrumbListJsonLd } from "@/lib/seo";
+import { getProductEnrichment } from "@/lib/payload/queries";
+import { PayloadRichTextRenderer } from "@/ui/components/payload-rich-text";
 import { Breadcrumbs } from "@/ui/components/breadcrumbs";
 import {
 	ProductGallery,
@@ -117,6 +119,9 @@ async function ProductContent({
 		notFound();
 	}
 
+	// Fetch Payload enrichment in parallel (returns null if Payload not configured)
+	const enrichment = await getProductEnrichment(product.id);
+
 	const variants = product.variants || [];
 	const selectedVariantId = searchParams.variant || (variants.length === 1 ? variants[0].id : undefined);
 	const selectedVariant = variants.find((v) => v.id === selectedVariantId);
@@ -206,6 +211,27 @@ async function ProductContent({
 								attributes={productAttributes}
 								careInstructions={careInstructions}
 							/>
+
+							{/* Payload CMS enrichment (tips, extended description, usage guide) */}
+							{enrichment && (
+								<div className="mt-8 space-y-6 border-t border-border pt-6">
+									{enrichment.tips && (
+										<div>
+											<h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Tips</h3>
+											<p className="text-sm leading-relaxed text-muted-foreground">{enrichment.tips}</p>
+										</div>
+									)}
+									{enrichment.extendedDescription && (
+										<PayloadRichTextRenderer content={enrichment.extendedDescription} className="prose prose-sm max-w-none dark:prose-invert" />
+									)}
+									{enrichment.usageGuide && (
+										<div>
+											<h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Usage Guide</h3>
+											<PayloadRichTextRenderer content={enrichment.usageGuide} className="prose prose-sm max-w-none dark:prose-invert" />
+										</div>
+									)}
+								</div>
+							)}
 						</div>
 					</div>
 				</div>

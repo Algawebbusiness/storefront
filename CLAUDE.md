@@ -214,6 +214,34 @@ Collections:
 - Custom login stránka
 - Tenant-specific dashboard views
 
+### Storefront ↔ Payload integrace (✅ IMPLEMENTOVÁNO)
+
+Storefront má vestavěnou podporu pro Payload CMS. Stačí nastavit `PAYLOAD_API_URL` v `.env` a obsah se automaticky zobrazí. Bez Payloadu vše funguje jako dřív (graceful degradation).
+
+**Knihovna (`src/lib/payload/`):**
+- `client.ts` — REST API client s cachováním (1h content, 5min navigace) a graceful fallback
+- `types.ts` — TypeScript typy pro všechny Payload collections (Post, Page, ProductEnrichment, Navigation)
+- `queries.ts` — Query helpers: `getPublishedPosts()`, `getPostBySlug()`, `getPageBySlug()`, `getProductEnrichment()`, `getNavigation()`
+
+**Stránky:**
+| Route | Zdroj dat | Popis |
+|-------|-----------|-------|
+| `/[channel]/blog` | Payload `posts` | Blog listing s paginací |
+| `/[channel]/blog/[slug]` | Payload `posts` | Blog detail s RichText rendererem |
+| `/[channel]/pages/[slug]` | Payload `pages` → Saleor fallback | Statické stránky (Payload má přednost) |
+| `/[channel]/products/[slug]` | Saleor + Payload `product-enrichment` | PDP s obohaceným obsahem (tipy, návody) |
+
+**RichText renderer** (`src/ui/components/payload-rich-text.tsx`):
+Renderuje Payload 3.x Lexical editor output — headings, paragraphs, lists, links, images, code, blockquotes. Tailwind prose styling.
+
+**Env variables:**
+```env
+PAYLOAD_API_URL=https://cms.example.com/api   # Payload REST API
+PAYLOAD_API_KEY=                                # Payload API key
+```
+
+**PRAVIDLO:** Saleor je VŽDY source of truth pro commerce data. Payload je source of truth pro content (blogy, stránky, enrichment). NIKDY nefetchuj sekvenčně — vždy `Promise.all`.
+
 ---
 
 ## Storefront — Paper Template

@@ -374,6 +374,17 @@
 		"careers": "Careers",
 		"press": "Press"
 	},
+	"blog": {
+		"title": "Blog",
+		"subtitle": "Latest articles and news from our store.",
+		"readMore": "Read more",
+		"publishedOn": "Published on {date}",
+		"by": "by {author}",
+		"noPosts": "No blog posts yet.",
+		"noPostsDescription": "Check back later for new articles.",
+		"backToBlog": "Back to blog",
+		"home": "Home"
+	},
 	"oauth": {
 		"authorizationError": "Authorization Error",
 		"contactDeveloper": "If you believe this is an error, contact the application developer.",
