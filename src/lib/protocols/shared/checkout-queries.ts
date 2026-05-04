@@ -175,6 +175,59 @@ export const CHECKOUT_LINES_ADD_MUTATION = `
   }
 `;
 
+/** Update line quantities in a checkout */
+export const CHECKOUT_LINES_UPDATE_MUTATION = `
+  ${CHECKOUT_FRAGMENT}
+  mutation ProtocolCheckoutLinesUpdate($id: ID!, $lines: [CheckoutLineUpdateInput!]!) {
+    checkoutLinesUpdate(id: $id, lines: $lines) {
+      checkout {
+        ...ProtocolCheckout
+      }
+      errors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+/** Delete lines from a checkout */
+export const CHECKOUT_LINES_DELETE_MUTATION = `
+  ${CHECKOUT_FRAGMENT}
+  mutation ProtocolCheckoutLinesDelete($id: ID!, $linesIds: [ID!]!) {
+    checkoutLinesDelete(id: $id, linesIds: $linesIds) {
+      checkout {
+        ...ProtocolCheckout
+      }
+      errors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
+/** Update arbitrary metadata on any ObjectWithMetadata (Checkout supports it). */
+export const UPDATE_METADATA_MUTATION = `
+  mutation ProtocolUpdateMetadata($id: ID!, $input: [MetadataInput!]!) {
+    updateMetadata(id: $id, input: $input) {
+      item {
+        metadata {
+          key
+          value
+        }
+      }
+      errors {
+        field
+        message
+        code
+      }
+    }
+  }
+`;
+
 /** Update checkout email */
 export const CHECKOUT_EMAIL_UPDATE_MUTATION = `
   ${CHECKOUT_FRAGMENT}
@@ -425,6 +478,27 @@ export interface CheckoutCreateData {
 export interface CheckoutLinesAddData {
 	checkoutLinesAdd: {
 		checkout: SaleorCheckout | null;
+		errors: SaleorCheckoutError[];
+	};
+}
+
+export interface CheckoutLinesUpdateData {
+	checkoutLinesUpdate: {
+		checkout: SaleorCheckout | null;
+		errors: SaleorCheckoutError[];
+	};
+}
+
+export interface CheckoutLinesDeleteData {
+	checkoutLinesDelete: {
+		checkout: SaleorCheckout | null;
+		errors: SaleorCheckoutError[];
+	};
+}
+
+export interface UpdateMetadataData {
+	updateMetadata: {
+		item: { metadata: Array<{ key: string; value: string }> } | null;
 		errors: SaleorCheckoutError[];
 	};
 }

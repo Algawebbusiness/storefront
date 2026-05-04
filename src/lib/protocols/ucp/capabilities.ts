@@ -58,13 +58,23 @@ export const SHOPPING_DISCOUNT: CapabilityDef = {
 };
 
 /**
- * All capabilities advertised in /.well-known/ucp. A4 (cart) and A5 (catalog)
- * extend this list.
+ * Cart capability — agent-built shopping cart prior to `checkout-session/complete`.
+ * Maps onto Saleor `Checkout` in the pre-complete state. Added in Phase A4.
+ */
+export const SHOPPING_CART: CapabilityDef = {
+	id: "dev.ucp.shopping.cart",
+	spec: "cart",
+	schema: "schemas/shopping/cart.json",
+};
+
+/**
+ * All capabilities advertised in /.well-known/ucp. A5 (catalog) extends this list.
  */
 export const ALL_BUSINESS_CAPABILITIES: readonly CapabilityDef[] = [
 	SHOPPING_CHECKOUT,
 	SHOPPING_FULFILLMENT,
 	SHOPPING_DISCOUNT,
+	SHOPPING_CART,
 ];
 
 /** Map of capability ID → versions, derived from ALL_BUSINESS_CAPABILITIES. */
