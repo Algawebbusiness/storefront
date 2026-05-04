@@ -4,18 +4,26 @@
  * Generates the /.well-known/ucp profile JSON based on deployment configuration.
  * This profile is the first thing any UCP-compatible agent reads to discover
  * what the business supports.
+ *
+ * Capability definitions live in `./capabilities.ts` so A4/A5 can extend the
+ * advertised set without touching this builder.
  */
 
-import type { UcpProfile } from "./types";
+import { getPublicKeyBase64, getSigningKey } from "../shared/signing";
+import {
+	ALL_BUSINESS_CAPABILITIES,
+	UCP_SCHEMA_BASE,
+	UCP_SPEC_BASE,
+	UCP_VERSION,
+	type CapabilityDef,
+} from "./capabilities";
+import type { UcpCapability, UcpProfile, UcpSigningKey } from "./types";
 
-const UCP_VERSION = process.env.UCP_VERSION || "2026-01-23";
-const UCP_SPEC_BASE = `https://ucp.dev/${UCP_VERSION}/specification`;
-const UCP_SCHEMA_BASE = `https://ucp.dev/${UCP_VERSION}`;
-
-/** Build the UCP business profile from environment configuration */
-export function buildUcpProfile(): UcpProfile {
+/** Build the UCP business profile from environment configuration. */
+export async function buildUcpProfile(): Promise<UcpProfile> {
 	const baseUrl = process.env.NEXT_PUBLIC_STOREFRONT_URL || "http://localhost:3000";
 	const stripeKey = process.env.STRIPE_PUBLISHABLE_KEY;
+	const signingKeys = await collectSigningKeys();
 
 	return {
 		ucp: {
@@ -40,31 +48,9 @@ export function buildUcpProfile(): UcpProfile {
 				],
 			},
 
-			capabilities: {
-				"dev.ucp.shopping.checkout": [
-					{
-						version: UCP_VERSION,
-						spec: `${UCP_SPEC_BASE}/checkout`,
-						schema: `${UCP_SCHEMA_BASE}/schemas/shopping/checkout.json`,
-					},
-				],
-				"dev.ucp.shopping.fulfillment": [
-					{
-						version: UCP_VERSION,
-						spec: `${UCP_SPEC_BASE}/fulfillment`,
-						schema: `${UCP_SCHEMA_BASE}/schemas/shopping/fulfillment.json`,
-						extends: "dev.ucp.shopping.checkout",
-					},
-				],
-				"dev.ucp.shopping.discount": [
-					{
-						version: UCP_VERSION,
-						spec: `${UCP_SPEC_BASE}/discount`,
-						schema: `${UCP_SCHEMA_BASE}/schemas/shopping/discount.json`,
-						extends: "dev.ucp.shopping.checkout",
-					},
-				],
-			},
+			capabilities: Object.fromEntries(
+				ALL_BUSINESS_CAPABILITIES.map((cap) => [cap.id, [toUcpCapability(cap)]]),
+			),
 
 			payment_handlers: stripeKey
 				? {
@@ -81,6 +67,26 @@ export function buildUcpProfile(): UcpProfile {
 				: {},
 		},
 
-		signing_keys: [],
+		signing_keys: signingKeys,
 	};
+}
+
+function toUcpCapability(def: CapabilityDef): UcpCapability {
+	return {
+		version: UCP_VERSION,
+		spec: `${UCP_SPEC_BASE}/${def.spec}`,
+		schema: `${UCP_SCHEMA_BASE}/${def.schema}`,
+		...(def.extends ? { extends: def.extends } : {}),
+	};
+}
+
+async function collectSigningKeys(): Promise<UcpSigningKey[]> {
+	const [{ keyId }, publicKey] = await Promise.all([getSigningKey(), getPublicKeyBase64()]);
+	return [
+		{
+			kid: keyId,
+			algorithm: "ed25519",
+			public_key: publicKey,
+		},
+	];
 }

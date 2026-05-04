@@ -8,27 +8,25 @@
  * The checkout will expire naturally via Saleor's TTL.
  */
 
-import { NextResponse } from "next/server";
-import { validateAgentApiKey, unauthorizedResponse, protocolDisabledResponse } from "@/lib/protocols/shared/auth";
+import { validateAgentApiKey } from "@/lib/protocols/shared/auth";
+import {
+	signedJsonResponse,
+	signedProtocolDisabled,
+	signedUnauthorized,
+} from "@/lib/protocols/shared/response";
 import { saleorQuery } from "@/mcp-server/saleor-client";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
 import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
-import {
-	CHECKOUT_BY_ID_QUERY,
-	type CheckoutByIdData,
-} from "@/lib/protocols/shared/checkout-queries";
+import { CHECKOUT_BY_ID_QUERY, type CheckoutByIdData } from "@/lib/protocols/shared/checkout-queries";
 
-export async function POST(
-	request: Request,
-	{ params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
 	if (process.env.UCP_ENABLED !== "true") {
-		return protocolDisabledResponse("UCP");
+		return signedProtocolDisabled("UCP");
 	}
 
 	const auth = validateAgentApiKey(request);
 	if (!auth.valid) {
-		return unauthorizedResponse();
+		return signedUnauthorized();
 	}
 
 	const { id } = await params;
@@ -36,13 +34,13 @@ export async function POST(
 	// Verify checkout exists
 	const fetchResult = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
 	if (!fetchResult.ok) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "server_error", message: fetchResult.error } },
 			{ status: 500 },
 		);
 	}
 	if (!fetchResult.data.checkout) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "not_found", message: "Checkout session not found" } },
 			{ status: 404 },
 		);
@@ -50,7 +48,7 @@ export async function POST(
 
 	const ucpMeta = await buildUcpMeta(auth.profileUrl);
 
-	return NextResponse.json({
+	return signedJsonResponse({
 		ucp: ucpMeta,
 		checkout_session: {
 			...mapCheckoutToProtocol(fetchResult.data.checkout),

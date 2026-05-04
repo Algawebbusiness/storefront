@@ -11,8 +11,12 @@
  * }
  */
 
-import { NextResponse } from "next/server";
-import { validateAgentApiKey, unauthorizedResponse, protocolDisabledResponse } from "@/lib/protocols/shared/auth";
+import { validateAgentApiKey } from "@/lib/protocols/shared/auth";
+import {
+	signedJsonResponse,
+	signedProtocolDisabled,
+	signedUnauthorized,
+} from "@/lib/protocols/shared/response";
 import { saleorQuery, getDefaultChannel } from "@/mcp-server/saleor-client";
 import { protocolToSaleor } from "@/lib/protocols/shared/address";
 import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
@@ -38,26 +42,26 @@ interface CreateAcpCheckoutBody {
 
 export async function POST(request: Request) {
 	if (process.env.ACP_ENABLED !== "true") {
-		return protocolDisabledResponse("ACP");
+		return signedProtocolDisabled("ACP");
 	}
 
 	const auth = validateAgentApiKey(request);
 	if (!auth.valid) {
-		return unauthorizedResponse();
+		return signedUnauthorized();
 	}
 
 	let body: CreateAcpCheckoutBody;
 	try {
 		body = (await request.json()) as CreateAcpCheckoutBody;
 	} catch {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "bad_request", message: "Invalid JSON body" } },
 			{ status: 400 },
 		);
 	}
 
 	if (!body.line_items || !Array.isArray(body.line_items) || body.line_items.length === 0) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "bad_request", message: "line_items is required and must be non-empty" } },
 			{ status: 400 },
 		);
@@ -74,7 +78,7 @@ export async function POST(request: Request) {
 	});
 
 	if (!createResult.ok) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "server_error", message: createResult.error } },
 			{ status: 500 },
 		);
@@ -82,7 +86,7 @@ export async function POST(request: Request) {
 
 	const createData = createResult.data.checkoutCreate;
 	if (createData.errors.length > 0) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "bad_request", message: createData.errors.map((e) => e.message).join("; ") } },
 			{ status: 400 },
 		);
@@ -90,7 +94,7 @@ export async function POST(request: Request) {
 
 	let checkout: SaleorCheckout | null = createData.checkout;
 	if (!checkout) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "server_error", message: "Checkout creation returned no data" } },
 			{ status: 500 },
 		);
@@ -141,8 +145,5 @@ export async function POST(request: Request) {
 		}
 	}
 
-	return NextResponse.json(
-		{ checkout_session: mapCheckoutToProtocol(checkout) },
-		{ status: 201 },
-	);
+	return signedJsonResponse({ checkout_session: mapCheckoutToProtocol(checkout) }, { status: 201 });
 }

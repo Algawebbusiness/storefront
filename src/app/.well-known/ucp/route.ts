@@ -14,7 +14,7 @@ export async function GET() {
 		return protocolDisabledResponse("UCP");
 	}
 
-	const profile = buildUcpProfile();
+	const profile = await buildUcpProfile();
 
 	return Response.json(profile, {
 		headers: {

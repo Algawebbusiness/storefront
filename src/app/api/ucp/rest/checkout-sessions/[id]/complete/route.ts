@@ -11,8 +11,12 @@
  * }
  */
 
-import { NextResponse } from "next/server";
-import { validateAgentApiKey, unauthorizedResponse, protocolDisabledResponse } from "@/lib/protocols/shared/auth";
+import { validateAgentApiKey } from "@/lib/protocols/shared/auth";
+import {
+	signedJsonResponse,
+	signedProtocolDisabled,
+	signedUnauthorized,
+} from "@/lib/protocols/shared/response";
 import { saleorQuery } from "@/mcp-server/saleor-client";
 import { processStripePayment } from "@/lib/protocols/shared/payment";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
@@ -31,17 +35,14 @@ interface CompleteCheckoutBody {
 	};
 }
 
-export async function POST(
-	request: Request,
-	{ params }: { params: Promise<{ id: string }> },
-) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
 	if (process.env.UCP_ENABLED !== "true") {
-		return protocolDisabledResponse("UCP");
+		return signedProtocolDisabled("UCP");
 	}
 
 	const auth = validateAgentApiKey(request);
 	if (!auth.valid) {
-		return unauthorizedResponse();
+		return signedUnauthorized();
 	}
 
 	const { id } = await params;
@@ -50,21 +51,21 @@ export async function POST(
 	try {
 		body = (await request.json()) as CompleteCheckoutBody;
 	} catch {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "bad_request", message: "Invalid JSON body" } },
 			{ status: 400 },
 		);
 	}
 
 	if (!body.payment?.token || !body.payment?.type) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "bad_request", message: "payment.type and payment.token are required" } },
 			{ status: 400 },
 		);
 	}
 
 	if (body.payment.type !== "com.stripe.shared_payment_token") {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "bad_request", message: `Unsupported payment type: ${body.payment.type}` } },
 			{ status: 400 },
 		);
@@ -73,13 +74,13 @@ export async function POST(
 	// Verify checkout exists
 	const fetchResult = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
 	if (!fetchResult.ok) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "server_error", message: fetchResult.error } },
 			{ status: 500 },
 		);
 	}
 	if (!fetchResult.data.checkout) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "not_found", message: "Checkout session not found" } },
 			{ status: 404 },
 		);
@@ -88,7 +89,7 @@ export async function POST(
 	// Process payment
 	const paymentResult = await processStripePayment(id, body.payment.token);
 	if (!paymentResult.ok) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "payment_failed", message: paymentResult.error ?? "Payment processing failed" } },
 			{ status: 400 },
 		);
@@ -100,7 +101,7 @@ export async function POST(
 	});
 
 	if (!completeResult.ok) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "server_error", message: completeResult.error } },
 			{ status: 500 },
 		);
@@ -108,7 +109,7 @@ export async function POST(
 
 	const completeData = completeResult.data.checkoutComplete;
 	if (completeData.errors.length > 0) {
-		return NextResponse.json(
+		return signedJsonResponse(
 			{ error: { code: "checkout_error", message: completeData.errors.map((e) => e.message).join("; ") } },
 			{ status: 400 },
 		);
@@ -120,13 +121,11 @@ export async function POST(
 	const finalFetch = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
 	const checkoutData = finalFetch.ok ? finalFetch.data.checkout : null;
 
-	return NextResponse.json({
+	return signedJsonResponse({
 		ucp: ucpMeta,
 		checkout_session: checkoutData
 			? { ...mapCheckoutToProtocol(checkoutData), status: "completed" as const }
 			: { id, status: "completed" as const },
-		order: completeData.order
-			? { id: completeData.order.id, number: completeData.order.number }
-			: null,
+		order: completeData.order ? { id: completeData.order.id, number: completeData.order.number } : null,
 	});
 }

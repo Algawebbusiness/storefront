@@ -2,7 +2,7 @@
  * UCP (Universal Commerce Protocol) types.
  *
  * Based on: https://ucp.dev/latest/specification/overview/
- * Spec version: 2026-01-23
+ * Spec version: 2026-04-08 (bumped from 2026-01-23 in Phase A2)
  */
 
 /** UCP business profile — served at /.well-known/ucp */
@@ -22,6 +22,22 @@ export interface UcpService {
 	transport: "rest" | "mcp";
 	endpoint: string;
 	schema: string;
+	/**
+	 * Per-service error handling policy.
+	 *
+	 * Added in UCP 2026-04-08. The exact JSON schema for this object lives at
+	 * `${UCP_SCHEMA_BASE}/services/error-handling.json` — fields here mirror the
+	 * common subset; tighten when validating against the published schema.
+	 */
+	error_handling?: UcpServiceErrorHandling;
+}
+
+export interface UcpServiceErrorHandling {
+	retry?: {
+		max_attempts?: number;
+		backoff?: "exponential" | "linear" | "fixed";
+	};
+	retryable_status_codes?: number[];
 }
 
 export interface UcpCapability {
