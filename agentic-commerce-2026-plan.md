@@ -2561,6 +2561,7 @@ Před každým commitem:
 [2026-05-04] A2 — UCP_VERSION default 2026-04-08, schema URLs bumped, capability defs enumerated in capabilities.ts (terrain for A4/A5), error_handling type added, 5 profile-builder tests pass (144 total)
 [2026-05-04] A3 — signedJsonResponse + signedUnauthorized/signedProtocolDisabled wrappers, profile-builder publishes signing_keys[], all 5 UCP REST routes + ACP checkout signed, 9 response tests pass (153 total)
 [2026-05-04] A4 — dev.ucp.shopping.cart capability + 4 REST routes (POST/GET/PATCH/DELETE carts, POST/PATCH/DELETE lines), cart-mapper.ts maps Saleor Checkout → UCP cart shape (sku per line, mandatory top-level currency, status active/cancelled), 8 cart-mapper tests pass (161 total). Note: A1-A3 had to be reapplied first — Nextcloud sync race had silently rolled back the working tree to git HEAD; commit 5831353b protects against recurrence.
+[2026-05-07] A5 — dev.ucp.shopping.catalog capability + 3 REST routes (GET search, GET products/[slug], GET categories), catalog-queries.ts + catalog-mapper.ts map Saleor Product/Category → UCP catalog shape with structured attributes (slug→joined value names), availability enum (in_stock/out_of_stock/preorder), and amount_cents pricing. Cursor-based pagination (next_cursor + has_next_page) deviating from plan's `?page=` since Saleor only supports cursor pagination. MCP search_products tool retained side-by-side. 14 catalog-mapper tests pass (175 total). Workspace migrated to ~/code/storefront/ — sync race no longer a risk.
 ```
 
 ---

@@ -68,13 +68,23 @@ export const SHOPPING_CART: CapabilityDef = {
 };
 
 /**
- * All capabilities advertised in /.well-known/ucp. A5 (catalog) extends this list.
+ * Catalog capability — agent-facing product search, detail and category listing.
+ * Coexists with the MCP `search_products` tool (REST + MCP transports advertised
+ * side by side in the profile). Added in Phase A5.
  */
+export const SHOPPING_CATALOG: CapabilityDef = {
+	id: "dev.ucp.shopping.catalog",
+	spec: "catalog",
+	schema: "schemas/shopping/catalog.json",
+};
+
+/** All capabilities advertised in /.well-known/ucp. */
 export const ALL_BUSINESS_CAPABILITIES: readonly CapabilityDef[] = [
 	SHOPPING_CHECKOUT,
 	SHOPPING_FULFILLMENT,
 	SHOPPING_DISCOUNT,
 	SHOPPING_CART,
+	SHOPPING_CATALOG,
 ];
 
 /** Map of capability ID → versions, derived from ALL_BUSINESS_CAPABILITIES. */

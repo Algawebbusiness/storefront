@@ -29,7 +29,7 @@ describe("buildUcpProfile (UCP 2026-04-08)", () => {
 		expect(checkout?.spec).toBe("https://ucp.dev/2026-04-08/specification/checkout");
 	});
 
-	it("advertises the foundation capabilities including cart (A4)", async () => {
+	it("advertises the foundation capabilities including cart (A4) and catalog (A5)", async () => {
 		vi.resetModules();
 		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
 		const profile = await buildUcpProfile();
@@ -40,6 +40,7 @@ describe("buildUcpProfile (UCP 2026-04-08)", () => {
 				"dev.ucp.shopping.fulfillment",
 				"dev.ucp.shopping.discount",
 				"dev.ucp.shopping.cart",
+				"dev.ucp.shopping.catalog",
 			]),
 		);
 
@@ -49,6 +50,10 @@ describe("buildUcpProfile (UCP 2026-04-08)", () => {
 		const cart = profile.ucp.capabilities["dev.ucp.shopping.cart"]?.[0];
 		expect(cart?.schema).toBe("https://ucp.dev/2026-04-08/schemas/shopping/cart.json");
 		expect(cart?.extends).toBeUndefined();
+
+		const catalog = profile.ucp.capabilities["dev.ucp.shopping.catalog"]?.[0];
+		expect(catalog?.schema).toBe("https://ucp.dev/2026-04-08/schemas/shopping/catalog.json");
+		expect(catalog?.extends).toBeUndefined();
 	});
 
 	it("respects an explicit UCP_VERSION override", async () => {
