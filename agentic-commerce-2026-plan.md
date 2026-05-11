@@ -22,20 +22,22 @@
 7. [Fáze C — Post-order & multi-payment handlers](#fáze-c--post-order--multi-payment-handlers)
 8. [Fáze D — Czech moat](#fáze-d--czech-moat)
 9. [Fáze E — Produktizace](#fáze-e--produktizace)
-10. [Cross-cutting (testy, docs, migrace)](#cross-cutting)
-11. [Stav implementace](#stav-implementace)
+10. [Fáze F — MCP Apps / agent-native UI](#fáze-f--mcp-apps--agent-native-ui)
+11. [Cross-cutting (testy, docs, migrace)](#cross-cutting)
+12. [Stav implementace](#stav-implementace)
 
 ---
 
 ## Jak používat tento plán
 
-- **5 fází (A–E), každá 10 kroků.**
+- **6 fází (A–F).** A–E jsou ~10 kroků každá, F je 8.
 - Kroky v rámci fáze jsou **obvykle lineární** (krok N+1 staví na N). Závislosti jsou explicitně uvedené v každém kroku.
 - Mezi fázemi:
   - **A je foundation** — nutné dokončit před vším ostatním.
   - **B a C** mohou běžet paralelně po A.
   - **D čeká na B i C.**
   - **E čeká na A–D.**
+  - **F** může běžet po C (závisí jen na MCP server vrstvě z A4/A5 a auth z B); D a F jsou nezávislé.
 - **Každý krok = jedna AI session.** Každý blok obsahuje cíl, soubory, klíčové implementační detaily/schémata, acceptance criteria a notes — tolik, aby AI agent mohl krok převzít a dokončit bez další analýzy.
 - **Po dokončení kroku** přidej řádek do sekce `## Stav implementace` na konci dokumentu (datum, krok, commit hash).
 - **Před každou fází** přečti pre-flight checklist na začátku fáze (pokud existuje) — některé fáze vyžadují rozhodnutí, která by měla být učiněna lidmi, ne AI.
@@ -2549,6 +2551,855 @@ Před každým commitem:
 - TypeScript strict (žádné `any`).
 - ESLint clean.
 - Žádný nový dependency bez zdůvodnění (audit `pnpm-lock.yaml` diff).
+
+---
+
+# Fáze F — MCP Apps / agent-native UI
+
+**Cíl:** Rozšířit existujících 12 MCP tools o **MCP Apps** vrstvu (`2026-01-26` spec) — tooly nadále vrací JSON, ale navíc deklarují `_meta.ui.resourceUri` na `ui://`-resource, kterou host (Claude Desktop, VS Code Copilot, Goose, Postman) vyrendruje jako sandboxovaný iframe s tenant-branded product cards, cart preview, checkout summary a order receipt. Žádný breaking change pro hosty, kteří MCP Apps neumí — `_meta.ui` je čistě additive.
+
+**Trvání:** ~12 dní (8 kroků, každý ~1.5 dne, F1 + F8 lehčí).
+
+**Výstup fáze:** Když uživatel v Claude napíše "najdi mi etiopskou kávu" a agent zavolá `search_products`, místo JSON dumpu vidí vizuální product carousel s obrázky a "Add to cart" tlačítky. Když pak agent řekne "přidej #2", `complete_checkout` flow končí vizuálním order receipt-em uvnitř chatu. Vše tenant-themed přes `brand.css`, vše edge-runtime kompatibilní (Cloudflare Pages), vše fallback-safe pro hosty bez MCP Apps podpory.
+
+---
+
+## F1. Závislosti, projektová struktura, single-bundle build pipeline
+
+**Cíl:** Přidat `@modelcontextprotocol/ext-apps`, postavit izolovaný Vite single-file build pro UI bundle a propojit ho s Next.js bez ovlivnění hlavního builds.
+
+**Závislosti:** Žádné (může běžet paralelně po dokončení Fáze C).
+
+**Soubory:**
+
+- `package.json` (úprava — přidat 2 dep + 2 devDep)
+- `pnpm-lock.yaml` (regenerace)
+- `src/mcp-apps/` (nový adresář — root MCP Apps codebase)
+- `src/mcp-apps/vite.config.ts` (nový)
+- `src/mcp-apps/tsconfig.json` (nový — extends root, jen pro UI bundle)
+- `src/mcp-apps/views/` (nový — adresář pro UI entry HTML files, populace v F3–F6)
+- `scripts/build-mcp-apps.mjs` (nový — orchestruje multi-entry Vite build)
+- `next.config.js` (úprava — `outputFileTracingIncludes` pro `dist/mcp-apps/**/*.html`)
+- `.gitignore` (přidat `src/mcp-apps/dist/`)
+
+**Implementace:**
+
+Nové závislosti — explicitně justifikované per CLAUDE.md rules:
+
+- `@modelcontextprotocol/ext-apps` (~runtime) — oficiální helper od MCP týmu, exportuje `registerAppTool`, `registerAppResource`, `RESOURCE_MIME_TYPE` (`"text/html;profile=mcp-app"`) na server-side a `App` třídu na klient-side. Bez něj musíme ručně implementovat handshake (`ui/initialize` → `ui/notifications/initialized`) a parsovat `ui/notifications/tool-result` notifikace. Justifikace: úspora ~300 LOC + odolnost vůči breaking spec revizím (lib se versionuje s 2026-01-26).
+- `vite` + `vite-plugin-singlefile` (devDep) — viz oficiální MCP Apps build guide; jediný realistický způsob, jak dostat React komponenty + CSS + JS do jednoho HTML stringu, který lze poslat jako `ui://` resource bez CSP gymnastiky. Repo zatím Vite nemá (Next.js používá svůj bundler), ale Vite tu běží **izolovaně, jen pro UI assets** — nedotýká se hlavního Next.js builds.
+
+Adresářový layout:
+
+```
+src/mcp-apps/
+  vite.config.ts
+  tsconfig.json
+  views/
+    product-card.html       # F3
+    product-list.html       # F3
+    product-detail.html     # F4
+    cart-preview.html       # F5
+    checkout-summary.html   # F6
+    order-receipt.html      # F6
+  src/
+    bridge.ts               # tenký wrapper kolem App třídy — F2
+    theme.ts                # tenant branding injection — F2
+    types.ts                # shared payload types — F2
+    components/             # F3+ React komponenty
+    entries/                # entry .tsx soubory pro každou view
+      product-card.tsx
+      product-list.tsx
+      ...
+  dist/                     # build output, gitignored
+```
+
+`vite.config.ts`:
+
+```ts
+import { defineConfig } from "vite";
+import { viteSingleFile } from "vite-plugin-singlefile";
+import react from "@vitejs/plugin-react"; // už v devDeps (React je v repo)
+import { resolve } from "node:path";
+
+export default defineConfig({
+  plugins: [react(), viteSingleFile({ removeViteModuleLoader: true })],
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        "product-card": resolve(__dirname, "views/product-card.html"),
+        "product-list": resolve(__dirname, "views/product-list.html"),
+        "product-detail": resolve(__dirname, "views/product-detail.html"),
+        "cart-preview": resolve(__dirname, "views/cart-preview.html"),
+        "checkout-summary": resolve(__dirname, "views/checkout-summary.html"),
+        "order-receipt": resolve(__dirname, "views/order-receipt.html"),
+      },
+    },
+  },
+});
+```
+
+`scripts/build-mcp-apps.mjs` — invokuje `vite build` z `src/mcp-apps/` a po dokončení loguje sizes. Přidat do `package.json`:
+
+```jsonc
+"scripts": {
+  "build:mcp-apps": "node scripts/build-mcp-apps.mjs",
+  "prebuild": "pnpm run generate:all && pnpm run build:mcp-apps",
+  ...
+}
+```
+
+**Acceptance:**
+
+- [ ] `pnpm install` projde, `node_modules/@modelcontextprotocol/ext-apps/server.js` existuje.
+- [ ] `pnpm run build:mcp-apps` produkuje 6 self-contained HTML files v `src/mcp-apps/dist/` (po dokončení F3–F6 — pro F1 stačí 1 stub view).
+- [ ] Každý built HTML je `< 250 KB` gzipped (single-file constraint).
+- [ ] `pnpm run build` (Next.js) **stále projde** — UI bundle je side-channel.
+- [ ] `pnpm exec tsc --noEmit` clean, žádné `any`.
+- [ ] Stub `product-card.html` se renderuje v basic-host z ext-apps repa (`SERVERS='["http://localhost:3000/mcp"]' npm start`).
+
+**Notes:**
+
+- Záměrně **nepřidáváme** React Native, Preact ani Vue — repo už používá React 19, držíme se ho.
+- Pokud Cloudflare Pages build memory by byl problém, vita single-file je low-memory (žádné chunky); pre-builduje se lokálně v repo, runtime jen čte z disku.
+- Spec je `2026-01-26` — datum draft, pinujeme `@modelcontextprotocol/ext-apps` na **přesnou minor verzi**, ne `^`. Bump bude vědomá decision v F8.
+
+---
+
+## F2. Resource server, AppBridge, tenant branding injection
+
+**Cíl:** Postavit společnou infra pro serving UI resources (`registerAppResource`), klient-side `AppBridge` wrapper a runtime injection tenant `brand.css` + `brandConfig` do bundled HTML — bez nutnosti re-buildovat per-tenant.
+
+**Závislosti:** F1.
+
+**Soubory:**
+
+- `src/mcp-server/apps/registry.ts` (nový — central UI resource registry)
+- `src/mcp-server/apps/serve-html.ts` (nový — load + theme injection)
+- `src/mcp-server/apps/csp.ts` (nový — buildne `_meta.ui.csp` allowlist)
+- `src/mcp-apps/src/bridge.ts` (nový — wraps `App` třídu, sjednocuje API)
+- `src/mcp-apps/src/theme.ts` (nový — čte `window.__BRAND__` injektnuté hostem)
+- `src/mcp-apps/src/types.ts` (nový — sdílené payload typy)
+- `src/mcp-server/index.ts` (úprava — invokuje `registerAllAppResources()`)
+
+**Implementace:**
+
+Central registry mapuje view name → `ui://` URI → HTML file path:
+
+```ts
+// src/mcp-server/apps/registry.ts
+export const APP_RESOURCES = {
+  productCard: {
+    uri: "ui://saleor/product-card.html",
+    bundle: "product-card.html",
+    permissions: [] as string[],          // _meta.ui.permissions
+  },
+  productList: {
+    uri: "ui://saleor/product-list.html",
+    bundle: "product-list.html",
+    permissions: [],
+  },
+  productDetail: {
+    uri: "ui://saleor/product-detail.html",
+    bundle: "product-detail.html",
+    permissions: [],
+  },
+  cartPreview: {
+    uri: "ui://saleor/cart-preview.html",
+    bundle: "cart-preview.html",
+    permissions: [],
+  },
+  checkoutSummary: {
+    uri: "ui://saleor/checkout-summary.html",
+    bundle: "checkout-summary.html",
+    permissions: [],
+  },
+  orderReceipt: {
+    uri: "ui://saleor/order-receipt.html",
+    bundle: "order-receipt.html",
+    permissions: [],
+  },
+} as const;
+
+export type AppResourceKey = keyof typeof APP_RESOURCES;
+```
+
+`serve-html.ts` načte built HTML a injektne tenant theme **jako první `<script>` v `<head>`**, takže běží před React mountem:
+
+```ts
+import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
+import { readFile } from "node:fs/promises";
+import { brandConfig } from "@/config/brand";
+
+const BRAND_CSS = await readFile(path.join(process.cwd(), "src/styles/brand.css"), "utf-8");
+
+export async function loadThemedView(bundle: string): Promise<string> {
+  const html = await readFile(path.join(process.cwd(), "src/mcp-apps/dist", bundle), "utf-8");
+  const themeScript = `
+    <script>window.__BRAND__ = ${JSON.stringify(brandConfig)};</script>
+    <style id="brand-tokens">${BRAND_CSS}</style>
+  `;
+  return html.replace("</head>", `${themeScript}</head>`);
+}
+```
+
+`csp.ts` — buildne allowlist origins (Saleor + image CDN). Spec field je **`_meta.ui.csp`** (per overview docs); přesný JSON shape per `csp.resourceDomains` (per build docs) a `script-src` / `connect-src` allow lists per Patterns docs:
+
+```ts
+export function buildCsp(): Record<string, string[]> {
+  const saleorOrigin = new URL(process.env.NEXT_PUBLIC_SALEOR_API_URL!).origin;
+  const cdnOrigin = process.env.NEXT_PUBLIC_MEDIA_CDN_ORIGIN;
+  const origins = [saleorOrigin, cdnOrigin].filter(Boolean) as string[];
+  return {
+    resourceDomains: origins,                    // images, fonts
+    "img-src":   ["'self'", ...origins, "data:"],
+    "connect-src": ["'self'"],                   // app jen volá tools/call, ne fetch
+    "style-src": ["'self'", "'unsafe-inline'"],  // brand.css je inline
+    "script-src": ["'self'"],                    // bundle je self-hosted v ui://
+  };
+}
+```
+
+Server-side registrace:
+
+```ts
+// src/mcp-server/apps/index.ts
+import { registerAppResource, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
+import { APP_RESOURCES } from "./registry";
+import { loadThemedView } from "./serve-html";
+
+export function registerAllAppResources(server: McpServer): void {
+  for (const [key, res] of Object.entries(APP_RESOURCES)) {
+    registerAppResource(
+      server,
+      res.uri,
+      res.uri,
+      { mimeType: RESOURCE_MIME_TYPE },
+      async () => ({
+        contents: [{ uri: res.uri, mimeType: RESOURCE_MIME_TYPE, text: await loadThemedView(res.bundle) }],
+      }),
+    );
+  }
+}
+```
+
+Volá se v `src/mcp-server/index.ts` po existujících `registerXxxTools(server)`.
+
+Klient-side bridge — sjednocuje API přes všechny views:
+
+```ts
+// src/mcp-apps/src/bridge.ts
+import { App } from "@modelcontextprotocol/ext-apps";
+import type { AppPayload } from "./types";
+
+export function createBridge<T extends AppPayload>(name: string, version = "1.0.0") {
+  const app = new App({ name, version });
+  app.connect();   // sends ui/initialize, awaits ui/notifications/initialized
+  return {
+    onResult: (handler: (payload: T) => void) => {
+      // ui/notifications/tool-result delivered as ontoolresult
+      app.ontoolresult = (result) => {
+        const text = result.content?.find((c) => c.type === "text")?.text;
+        if (!text) return;
+        try { handler(JSON.parse(text) as T); } catch { /* spec allows text-only */ }
+      };
+    },
+    callTool: <R>(name: string, args: Record<string, unknown>) =>
+      app.callServerTool({ name, arguments: args }) as Promise<R>,
+    openLink: (url: string) => app.openLink?.(url),               // ui/open-link
+    sendMessage: (text: string) => app.sendMessage?.(text),       // ui/message
+  };
+}
+```
+
+Theme loader na klientu:
+
+```ts
+// src/mcp-apps/src/theme.ts
+declare global { interface Window { __BRAND__: typeof import("@/config/brand").brandConfig } }
+export const brand = window.__BRAND__;
+```
+
+**Acceptance:**
+
+- [ ] `GET /mcp` → JSON-RPC `resources/read` na `ui://saleor/product-card.html` vrátí HTML s `mimeType: "text/html;profile=mcp-app"`.
+- [ ] Vrácené HTML obsahuje `<script>window.__BRAND__ = {...}</script>` PŘED main bundle scriptem.
+- [ ] Vrácené HTML obsahuje `<style id="brand-tokens">` s OKLCH tokens z `brand.css`.
+- [ ] Test: změna `brandConfig.siteName` v `src/config/brand.ts` propaguje do served HTML **bez** rebuilds Vite bundle.
+- [ ] `tsc --noEmit` clean v root i `src/mcp-apps/tsconfig.json`.
+- [ ] Unit test pokrývá `loadThemedView()` — assertne pozici theme script-u před `</head>`.
+
+**Notes:**
+
+- **Unresolved spec question:** přesný shape `_meta.ui.csp` — overview říká "control what external origins the app can load resources from", build/Patterns mluví o `csp.resourceDomains`, ale wire spec MDX (2026-01-26) explicitně neenumeruje subkey list. Pin: shape derivován z basic-server-react example v F1 review; pokud spec revize změní, re-shape v F8.
+- **Edge-runtime caveat:** `fs.readFile` v Next.js routes vyžaduje Node runtime, ne edge. `/mcp` route už používá `WebStandardStreamableHTTPServerTransport`, ale registry handler je sync callback — pre-loadovat HTML do paměti při boot a vrátit z mapy. Implementační detail: top-level `await readFile()` při module load (Next.js to v server-only modulech podporuje).
+- **`window.__BRAND__` typing:** sdílí typ s root `brandConfig` přes path alias; eliminuje drift.
+
+---
+
+## F3. Catalog tools (search_products, get_collections, get_category_products) — product card + list views
+
+**Cíl:** Pro 3 catalog tools přidat `_meta.ui.resourceUri`. Vytvořit `product-card` (single product compact card) a `product-list` (carousel/grid) React komponenty. Tool results zůstávají JSON-stringified text, ui vrstva je čistě additive.
+
+**Závislosti:** F2.
+
+**Soubory:**
+
+- `src/mcp-server/tools/search.ts` (úprava — wrap `server.tool` přes `registerAppTool`)
+- `src/mcp-server/tools/categories.ts` (úprava — `get_category_products`)
+- `src/mcp-server/tools/collections.ts` (úprava)
+- `src/mcp-apps/src/types.ts` (rozšíření — `ProductListPayload`, `ProductCardPayload`)
+- `src/mcp-apps/src/components/ProductCard.tsx` (nový)
+- `src/mcp-apps/src/components/ProductList.tsx` (nový — embla-carousel jako v hlavním repu)
+- `src/mcp-apps/views/product-card.html` (nový)
+- `src/mcp-apps/views/product-list.html` (nový)
+- `src/mcp-apps/src/entries/product-card.tsx` (nový)
+- `src/mcp-apps/src/entries/product-list.tsx` (nový)
+
+**Implementace:**
+
+Tool registration — namísto `server.tool(...)` použít `registerAppTool` z `@modelcontextprotocol/ext-apps/server`, který přijímá `_meta.ui.resourceUri`:
+
+```ts
+// src/mcp-server/tools/search.ts (after refactor)
+import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
+import { APP_RESOURCES } from "../apps/registry.js";
+
+registerAppTool(
+  server,
+  "search_products",
+  {
+    title: "Search products",
+    description: "Search for products by text query...",
+    inputSchema: { /* zod-derived JSON schema */ },
+    _meta: {
+      ui: {
+        resourceUri: APP_RESOURCES.productList.uri,
+        // visibility defaults to ["model", "app"]
+      },
+    },
+  },
+  async ({ query, first, channel }) => { /* original logic */ },
+);
+```
+
+`tools/call` výsledek se hostem doručí do iframe přes notification **`ui/notifications/tool-result`** (per wire spec). `AppBridge.onResult` JSON.parse-uje text content do `ProductListPayload`.
+
+Payload typing — sdílený mezi server-side mapperem a klient-side komponentou:
+
+```ts
+// src/mcp-apps/src/types.ts
+export type ProductCardPayload = {
+  slug: string;
+  name: string;
+  thumbnail: string | null;
+  price: { min: number; max: number | null; currency: string };
+  inStock: boolean;
+  category: string | null;
+};
+
+export type ProductListPayload = {
+  totalCount: number;
+  products: ProductCardPayload[];
+};
+```
+
+`tools/search.ts` musí produkovat **JSON.stringify** výstup, který matchne `ProductListPayload`. Existující mapper už produkuje téměř shodný shape (`products[].thumbnail`, `price.min`, `price.max`, atd.); jen rename `variantCount` → odstranit (irrelevant pro UI), přidat absolutní URL pro `slug` → product detail link.
+
+Entry point:
+
+```tsx
+// src/mcp-apps/src/entries/product-list.tsx
+import { createRoot } from "react-dom/client";
+import { createBridge } from "../bridge";
+import { ProductList } from "../components/ProductList";
+import type { ProductListPayload } from "../types";
+
+const bridge = createBridge<ProductListPayload>("saleor-product-list");
+const root = createRoot(document.getElementById("root")!);
+
+function render(state: ProductListPayload | null) {
+  root.render(
+    <ProductList
+      payload={state}
+      onSelect={(slug) => bridge.callTool("get_product_detail", { slug })}
+      onAddToCart={(variantId) => bridge.callTool("create_checkout", { /* ... */ })}
+    />,
+  );
+}
+
+render(null);
+bridge.onResult(render);
+```
+
+HTML entry minimální:
+
+```html
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body><div id="root"></div><script type="module" src="/src/entries/product-list.tsx"></script></body></html>
+```
+
+Komponenta `ProductList` — embla-carousel-react (už v dep), tenant-themed přes inline OKLCH CSS vars. Žádné Tailwind v iframe (drží bundle malé), čistý CSS-in-CSS pomocí `@layer` + `var(--primary)`.
+
+**Acceptance:**
+
+- [ ] `tools/list` response pro `search_products` obsahuje `_meta.ui.resourceUri: "ui://saleor/product-list.html"`.
+- [ ] V basic-host: zavolání `search_products` zobrazí carousel s thumbnaily, ceny v správné měně, OOS badge na unavailable produktech.
+- [ ] Klik na product card → bridge volá `get_product_detail` → druhá UI view se renderuje (smoke test integrace s F4).
+- [ ] Host bez MCP Apps podpory (např. Inspector v JSON mode) **stále dostane** validní JSON text response.
+- [ ] `_meta.ui` je strip-out kompatibilní — JSON-RPC parsery, které pole nečekají, ho ignorují.
+- [ ] Bundle size: `product-list.html` < 200 KB gzipped.
+- [ ] `pnpm test` — nový test `apps-meta.test.ts` ověří přítomnost `_meta.ui.resourceUri` na 3 catalog tools.
+
+**Notes:**
+
+- **NEdoplňovat** Tailwind do iframe bundle — verze 3 Tailwindu by zdvojnásobila size. Místo toho: 1 sdílený `tokens.css` ve `src/mcp-apps/src/components/`, který používá `var(--primary)` atd. z injektnutého `brand.css`.
+- **Carousel není kritický** pro F3 acceptance — pokud embla v iframe sandboxu padne (kvůli passive event listeners), fallback grid 2×N je OK; iteration v F8.
+
+---
+
+## F4. Product detail view (get_product_detail, compare_products)
+
+**Cíl:** Vizuální product detail page uvnitř chatu — media gallery, variant selector, attributes table, "Add to cart" CTA. `compare_products` reusuje stejnou view s `mode: "compare"` přes URL fragment / tool args.
+
+**Závislosti:** F3 (ProductCard komponent je reused).
+
+**Soubory:**
+
+- `src/mcp-server/tools/products.ts` (úprava — wrap přes `registerAppTool`)
+- `src/mcp-apps/views/product-detail.html` (nový)
+- `src/mcp-apps/src/entries/product-detail.tsx` (nový)
+- `src/mcp-apps/src/components/ProductDetail.tsx` (nový)
+- `src/mcp-apps/src/components/VariantSelector.tsx` (nový)
+- `src/mcp-apps/src/components/AttributeTable.tsx` (nový)
+- `src/mcp-apps/src/components/MediaGallery.tsx` (nový)
+- `src/mcp-apps/src/types.ts` (rozšíření — `ProductDetailPayload`)
+
+**Implementace:**
+
+`registerAppTool` na obě tools, obě pointují na stejný `ui://saleor/product-detail.html`:
+
+```ts
+registerAppTool(server, "get_product_detail", {
+  ...,
+  _meta: { ui: { resourceUri: APP_RESOURCES.productDetail.uri } },
+}, handler);
+
+registerAppTool(server, "compare_products", {
+  ...,
+  _meta: { ui: { resourceUri: APP_RESOURCES.productDetail.uri } },
+}, handler);
+```
+
+Payload polymorfní:
+
+```ts
+export type ProductDetailPayload =
+  | { mode: "single"; product: ProductFull }
+  | { mode: "compare"; products: ProductFull[] };
+
+type ProductFull = {
+  name: string;
+  slug: string;
+  description: string | null;
+  category: string | null;
+  productType: string;
+  inStock: boolean;
+  price: { min: number; max: number | null; currency: string };
+  images: { url: string; alt: string | null }[];
+  variants: {
+    id: string;
+    name: string;
+    sku: string | null;
+    inStock: boolean;
+    quantityAvailable: number | null;
+    price: number | null;
+    currency: string | null;
+    attributes: Record<string, string>;
+  }[];
+  attributes: Record<string, string[]>;
+};
+```
+
+Render strategie:
+
+- `mode: "single"` → media gallery vlevo, info vpravo, variants jako pill selector.
+- `mode: "compare"` → side-by-side flex row, max 5 produktů (matchne `compare_products` max).
+- Klik na "Add to cart" → `bridge.callTool("create_checkout", { line_items: [{ variant_id, quantity: 1 }], api_key: window.__AGENT_KEY__ })`.
+- **Auth key:** klient-side iframe NEMÁ přístup k agent api_key (security boundary). Bridge přepošle `tools/call` request hostovi (Claude), který agent identitu drží. Host re-injektne svůj agent key. → **Žádný api_key v iframe payloadech**. Tool sám si vezme klíč z auth context.
+
+Vede k design constraint: checkout-tooly v `tools/checkout.ts` musí zvládnout volání **bez** explicitního `api_key` parametru když request přišel přes MCP Apps proxy. Spec: `tools/call` z iframe nese stejnou agent identitu jako původní tool call který otevřel iframe (subject preservation). Implementačně: `bridge.callTool` interně nepošle `api_key` — checkout tool fall-backne na request-level auth (`AGENT_API_KEYS` env, agent registry). Toto **už funguje** v Phase B `verifyAgentRequest()`.
+
+**Acceptance:**
+
+- [ ] `get_product_detail` z basic-host zobrazí media gallery, varianty, attributes — bez JSON dumpu.
+- [ ] Klik na variant pill → state update, "Add to cart" tlačítko aktivní jen pokud `inStock`.
+- [ ] `compare_products` se 3 slugy renderuje 3 produkty side-by-side.
+- [ ] Images z Saleor origin (deklarovaný v `_meta.ui.csp.img-src`) se načítají; image z jiných origins → blokován CSP, zobrazí placeholder.
+- [ ] Bundle < 220 KB gzipped (větší kvůli MediaGallery).
+- [ ] Test: dual-tool dispatch — `_meta.ui.resourceUri` stejné u obou tools, iframe rozpozná `mode` z payload.
+
+**Notes:**
+
+- **Spec gap:** ext-apps spec 2026-01-26 negarantuje subject preservation napříč `tools/call` z iframe. Pokud host re-prompts user pro confirmation na každý tool call z app, UX bude dotaz-spam. Mitigation: `_meta.ui` může (per `apps-extensions` docs) deklarovat `permissions: ["tools.unattended"]` nebo podobné — **přesný permission string nedohledán**, otevřená otázka pro F8 review proti zveřejněné API ref.
+- Variant selector NEpropaguje custom attributes (size/color combinatorics) — kept minimal. Pokročilý variant matcher = E5 territory.
+
+---
+
+## F5. Cart preview view (create_checkout, get_checkout)
+
+**Cíl:** Po `create_checkout` / `get_checkout` zobrazit visual cart s line items, quantity steppers, totals breakdown a "Proceed to checkout" CTA. Quantity changes triggerují bridge → `update_checkout` tool (nebo nový dedicated `update_checkout_line` — viz Notes).
+
+**Závislosti:** F4 (sdílí product image rendering).
+
+**Soubory:**
+
+- `src/mcp-server/tools/checkout.ts` (úprava — wrap `create_checkout`, `get_checkout`)
+- `src/mcp-apps/views/cart-preview.html` (nový)
+- `src/mcp-apps/src/entries/cart-preview.tsx` (nový)
+- `src/mcp-apps/src/components/CartPreview.tsx` (nový)
+- `src/mcp-apps/src/components/CartLine.tsx` (nový)
+- `src/mcp-apps/src/components/TotalsBlock.tsx` (nový — reused v F6)
+- `src/mcp-apps/src/types.ts` (rozšíření — `CartPreviewPayload`)
+- `src/lib/protocols/shared/checkout-mapper.ts` (audit — ověřit shape match s payload typem)
+
+**Implementace:**
+
+`create_checkout` a `get_checkout` už používají `mapCheckoutToProtocol()` který vrací UCP-shaped data. Payload pro UI je striktní podmnožina:
+
+```ts
+export type CartPreviewPayload = {
+  id: string;                                    // checkout ID
+  currency: string;
+  lines: {
+    id: string;
+    variantId: string;
+    productName: string;
+    variantName: string;
+    thumbnail: string | null;
+    quantity: number;
+    unitPrice: number;
+    lineTotal: number;
+  }[];
+  totals: {
+    subtotal: number;
+    discount: number;
+    shipping: number;
+    tax: number;
+    total: number;
+  };
+  warnings?: string[];
+  hasEmail: boolean;
+  hasShippingAddress: boolean;
+  hasDeliveryMethod: boolean;                    // gating pro "Proceed" CTA
+};
+```
+
+`registerAppTool` registrace stejný pattern jako F3. Klient bridge:
+
+```tsx
+// CartPreview.tsx
+function handleQtyChange(lineId: string, newQty: number) {
+  if (newQty === 0) {
+    // No direct DELETE_LINE tool today — closest is update_checkout with empty lines
+    // Decision: introduce mcp tool `update_checkout_line` (see Notes) OR optimistic-update + full-refetch via get_checkout.
+    bridge.callTool("update_checkout", { /* ... */ });
+  }
+}
+
+function handleProceed() {
+  bridge.callTool("update_checkout", {
+    checkout_id: cart.id,
+    // host injects current user's email/address if OAuth-authenticated
+  });
+  // Next view will be checkout-summary, triggered by host after update.
+}
+```
+
+**Tool design decision:** existující `update_checkout` aktualizuje email/address/delivery/promo, ne quantities. Pro F5 doplnit **`update_cart_line`** MCP tool (server.ts → `tools/cart-lines.ts` nový) volá Saleor `checkoutLinesUpdate` / `checkoutLinesDelete`. Vrátí refreshed `CartPreviewPayload`.
+
+Auth + cart consistency:
+- Anonymous flow: `checkout.id` v payload je sufficient.
+- OAuth flow (Phase B `verifyAgentRequest` OAuth-bound): když je agent vázán na user JWT, Saleor checkout se přiváže na user. Bridge nepředává JWT — predáváno je via host → MCP server hop (HTTP headers na `/mcp` request).
+- **Hop diagram:** iframe → host (postMessage `tools/call`) → MCP HTTP endpoint `/mcp` (s host-supplied Authorization header) → `verifyAgentRequest()` → Saleor s user JWT. Žádná změna v MCP server kódu nutná, jen ověřit že stávající `Authorization` header pass-through funguje (basic-host to dělá).
+
+**Acceptance:**
+
+- [ ] `create_checkout` → iframe ukáže cart preview s thumbnaily, quantity steppers, totals.
+- [ ] Změna quantity → optimistic UI update → `update_cart_line` tool call → re-render s authoritative totals ze Saleoru.
+- [ ] OOS warnings z Saleor `checkout.problems[]` zobrazeny jako badge na line.
+- [ ] "Proceed" CTA disabled dokud `hasEmail && hasShippingAddress`.
+- [ ] V basic-host test: cart preview rendering jak v anonymous, tak v OAuth flow (smoke test s mock JWT).
+- [ ] New tool `update_cart_line` registered, `_meta.ui.resourceUri` → cart-preview.html (re-renders sebe).
+
+**Notes:**
+
+- **Saleor doesn't have `checkoutLineRemove`** mutation samostatně; používá se `checkoutLinesDelete` s line IDs. `update_cart_line` přijme `{checkout_id, line_id, quantity}` a quantity=0 → delete.
+- **Open question:** má `update_cart_line` vyžadovat `api_key` jako ostatní checkout tools? Pro consistency: ano, ale **bridge ho neposílá** (viz F4 Notes — host injektuje). Z perspectivy of agent, je to jeden tool z 12+1 = 13 checkout tools.
+
+---
+
+## F6. Checkout summary + Order receipt views (update_checkout, complete_checkout)
+
+**Cíl:** Pre-pay konfirmační view (address recap, shipping method picker, totals, "Confirm & pay" CTA) a post-pay order receipt (order number, summary, status). Confirm tlačítko **NEspouští platbu uvnitř iframe** — bridge volá `complete_checkout`, payment se zpracuje host-side přes existing Stripe SPT mechanism.
+
+**Závislosti:** F5 (TotalsBlock reused).
+
+**Soubory:**
+
+- `src/mcp-server/tools/checkout.ts` (úprava — `update_checkout`, `complete_checkout` dostávají `_meta.ui`)
+- `src/mcp-apps/views/checkout-summary.html` (nový)
+- `src/mcp-apps/views/order-receipt.html` (nový)
+- `src/mcp-apps/src/entries/checkout-summary.tsx` (nový)
+- `src/mcp-apps/src/entries/order-receipt.tsx` (nový)
+- `src/mcp-apps/src/components/CheckoutSummary.tsx` (nový)
+- `src/mcp-apps/src/components/AddressBlock.tsx` (nový)
+- `src/mcp-apps/src/components/ShippingPicker.tsx` (nový)
+- `src/mcp-apps/src/components/OrderReceipt.tsx` (nový)
+- `src/mcp-apps/src/types.ts` (rozšíření)
+
+**Implementace:**
+
+Two-step UI flow:
+
+1. **Checkout summary** rendered po `update_checkout` — uživatel vidí finální stav, klikne "Confirm & pay".
+2. Bridge volá `complete_checkout` s `payment_token` který agent získal mimo iframe (Stripe SPT flow — viz Phase C `payment-handler-registry`).
+3. Tool result → `complete_checkout` má `_meta.ui.resourceUri: orderReceipt.uri`, host swap-ne UI z summary na receipt.
+
+```ts
+// checkout.ts — update_checkout
+registerAppTool(server, "update_checkout", {
+  ...,
+  _meta: { ui: { resourceUri: APP_RESOURCES.checkoutSummary.uri } },
+}, handler);
+
+// complete_checkout swap-ne UI po dokončení:
+registerAppTool(server, "complete_checkout", {
+  ...,
+  _meta: { ui: { resourceUri: APP_RESOURCES.orderReceipt.uri } },
+}, handler);
+```
+
+Payment token handling — KRITICKÉ z bezpečnostního pohledu:
+
+- Bridge **NIKDY neobsahuje** `payment_token`. Token = sensitive credential (Stripe one-time use).
+- Confirm tlačítko v iframe pošle `ui/message` (per spec — `"ui/message"` method, request from view to host) zpráva typu `"User confirmed checkout — please obtain payment token and complete"`.
+- Host (Claude) zpracuje LLM-side: vidí message → spustí Stripe SPT flow (host has agent's Stripe handler config) → zavolá `complete_checkout({checkout_id, payment_token})` z LLM contextu.
+- Result tool call → routed do iframe (přes `ui/notifications/tool-result`) → iframe swap-ne na order receipt.
+
+**Alternativní design (zamítnut):** bridge volá `complete_checkout` přímo s placeholder `payment_token: "$AGENT_INJECT"`, host substituuje. → Křehčí, žádný spec support. Místo toho **`ui/message`** je standardní mechanismus pro "delegate to host".
+
+```tsx
+// CheckoutSummary.tsx
+function handleConfirm() {
+  bridge.sendMessage(
+    `Please complete checkout ${cart.id} for total ${cart.totals.total} ${cart.currency}.`,
+  );
+  // Host's LLM will read this, gather payment_token from its Stripe flow, then call complete_checkout.
+  setStatus("awaiting-host-payment");
+}
+```
+
+`OrderReceipt` komponent — minimal: číslo objednávky, totals recap, "View order" link (přes `bridge.openLink` na `${baseUrl}/order/${order.id}`).
+
+**Acceptance:**
+
+- [ ] `update_checkout` po address update zobrazí summary s adresami, shipping method picker (přes Saleor `availableShippingMethods`), final totals.
+- [ ] Klik "Confirm & pay" → `ui/message` zpráva v chat log; LLM má kontext pro Stripe flow.
+- [ ] Po `complete_checkout` úspěchu → host renderuje order-receipt.html s order number a status.
+- [ ] Order receipt má funkční "View order" link otvírající `${baseUrl}/order/${id}` v novém tabu host browseru (přes `ui/open-link`).
+- [ ] **Payment token nikdy** v iframe DevTools / postMessage trace (security smoke test).
+- [ ] Failed checkout (Saleor errors) → receipt view zobrazí error block místo order data.
+
+**Notes:**
+
+- **Open spec question:** `ui/message` deliverable shape — per wire spec listing je to "Send message to chat", ale jestli zpráva je visible to user nebo jen LLM-context-only je nejasné. Default assumption: LLM-context. Pokud user zprávu vidí, UX bude noisy; mitigation: phrase zprávy neutrálně.
+- **Phase D / E note:** Comgate / GoPay UI uvnitř iframe je OUT OF SCOPE pro F. Stejný delegation pattern (`ui/message` → host → server) se rozšíří v D na non-Stripe handlery; payment confirmation lze řešit redirect přes `ui/open-link` na hosted payment page Comgate.
+
+---
+
+## F7. Fallback strategy, error boundaries, spec-version resilience
+
+**Cíl:** Garantovat že (a) hosty bez MCP Apps podpory dostanou plnohodnotný text response, (b) iframe load failure / spec mismatch nezablokuje agent workflow, (c) máme escape hatch pro breaking spec revize před GA.
+
+**Závislosti:** F2–F6 (integrace pattern napříč).
+
+**Soubory:**
+
+- `src/mcp-server/apps/feature-flag.ts` (nový — `MCP_APPS_ENABLED` env gate)
+- `src/mcp-server/apps/registry.ts` (úprava — conditional `_meta.ui`)
+- `src/mcp-apps/src/components/ErrorBoundary.tsx` (nový — React error boundary)
+- `src/mcp-apps/src/entries/*.tsx` (úprava — wrap root v ErrorBoundary)
+- `src/mcp-apps/src/bridge.ts` (úprava — handshake timeout)
+- `__tests__/mcp-apps/fallback.test.ts` (nový)
+- `docs/mcp-apps-spec-pinning.md` (nový — kdy a jak bumpnout `@modelcontextprotocol/ext-apps`)
+- `.env.example` (přidat `MCP_APPS_ENABLED=true`)
+
+**Implementace:**
+
+Feature flag — vypne celou Apps vrstvu bez code rip-out:
+
+```ts
+// feature-flag.ts
+export const mcpAppsEnabled = (): boolean =>
+  process.env.MCP_APPS_ENABLED === "true" || process.env.MCP_APPS_ENABLED === "1";
+
+// registry usage:
+export function appsMeta(key: AppResourceKey) {
+  if (!mcpAppsEnabled()) return undefined;
+  return { ui: { resourceUri: APP_RESOURCES[key].uri /* , permissions, csp */ } };
+}
+```
+
+`registerAppTool` call přejde na conditional:
+
+```ts
+server.tool(name, description, schema, async (args) => {
+  const result = await handler(args);
+  if (!mcpAppsEnabled()) return result;
+  return { ...result, _meta: { ui: { resourceUri: APP_RESOURCES.productList.uri } } };
+});
+```
+
+— Místo `registerAppTool` použít `server.tool` + manual `_meta` injection v response. Důvod: `_meta` na tool **DEFINICI** (přes `registerAppTool`) je část discovery odpovědi v `tools/list`. Pokud hosty bez Apps to ignorují (musí, per JSON-RPC spec), je to fine. Ale conservative path: ponechat `_meta.ui` jen na response a v `tools/list` neexponovat. → Re-discutovat v review.
+
+**Decision (default):** Použít `registerAppTool` (víc spec-aligned) + ověřit že MCP Inspector (~3 měsíce staré verze) ignoruje neznámá `_meta` pole bez crashe. Pokud crashne, fallback na response-only `_meta` injection.
+
+Bridge handshake timeout:
+
+```ts
+// bridge.ts
+const app = new App({ name, version });
+const connectPromise = Promise.race([
+  app.connect(),
+  new Promise((_, rej) => setTimeout(() => rej(new Error("ui/initialize timeout")), 5000)),
+]);
+connectPromise.catch((e) => {
+  document.body.innerHTML = `<pre>${JSON.stringify({ error: String(e) }, null, 2)}</pre>`;
+  // Degrade to JSON dump if host doesn't speak ui/* protocol.
+});
+```
+
+`docs/mcp-apps-spec-pinning.md` content outline:
+1. Spec snapshot date: 2026-01-26.
+2. Pinned versions of `@modelcontextprotocol/ext-apps@X.Y.Z`.
+3. Quarterly review process — check `@modelcontextprotocol/ext-apps` changelog, run smoke tests proti pinned + bumped.
+4. Breaking change escape: feature flag `MCP_APPS_ENABLED=false` pro emergency rollback.
+5. Known unresolved spec questions (kompilace ze všech "Notes" v F2–F6): permissions enum, csp subkey shape, ui/message visibility.
+
+**Acceptance:**
+
+- [ ] `MCP_APPS_ENABLED=false` → `tools/list` neobsahuje `_meta.ui` na žádném tool; UI resources stále registered ale never referenced.
+- [ ] Test: simuluj MCP Inspector starší než 2026-01-26 (script s plain JSON-RPC, který volá `tools/call` bez `ui/initialize`) → tool vrátí JSON, žádný 500.
+- [ ] Test: iframe entry s broken bundle (corrupted HTML) → ErrorBoundary zobrazí "Failed to load shopping UI — see chat for raw data" + plain text response je viditelný v chat (host fallback).
+- [ ] Bridge handshake timeout po 5s → iframe sám vystaví JSON dump.
+- [ ] `docs/mcp-apps-spec-pinning.md` má min. 5 sekcí + tabulka unresolved questions.
+
+**Notes:**
+
+- **Critical unresolved question (escalated):** spec 2026-01-26 je explicitně označen jako "draft" v repo path (`specification/draft/apps.mdx` per build guide). Mezi 2026-01-26 a Phase F start (~2026-05) může spec revize landnout. Mitigation: F7 dělá vše version-flag-controlled, F8 zahrnuje "spec re-check" sub-step.
+
+---
+
+## F8. Docs, tests, telemetry, fáze-finalizace + spec review
+
+**Cíl:** Uzavřít fázi — kompletní test coverage, dokumentace v CLAUDE.md + plánu, smoke test proti real Claude Desktop session, telemetry pro adoption tracking, spec audit proti aktuální draft revizi spec.
+
+**Závislosti:** F1–F7.
+
+**Soubory:**
+
+- `CLAUDE.md` (úprava — přidat sekci "MCP Apps" pod stávající "MCP Server")
+- `agentic-commerce-2026-plan.md` (úprava — `## Stav implementace` append F1–F8)
+- `AGENTS.md` (úprava — note that agents can request specific UI views)
+- `docs/mcp-apps-readme.md` (nový — developer doc)
+- `__tests__/mcp-apps/payload-shapes.test.ts` (nový)
+- `__tests__/mcp-apps/resource-serve.test.ts` (nový)
+- `__tests__/mcp-apps/apps-meta.test.ts` (nový)
+- `__tests__/mcp-apps/csp.test.ts` (nový)
+- `src/mcp-server/apps/telemetry.ts` (nový — log usage events)
+- `MIGRATION.md` (úprava — note: clients používající staré `/mcp` endpoint nezasaženi, no migration needed)
+
+**Implementace:**
+
+Test coverage targets:
+- **Payload shapes:** každý `XxxPayload` type vs reálný output mapperu (`mapCheckoutToProtocol`, search.ts JSON output) — 6 typů × průměrně 3 assertions = ~18 testů.
+- **Resource serve:** `loadThemedView` injektne brand CSS + `__BRAND__` před React mount, idempotent při různých `brandConfig` hodnotách.
+- **`_meta.ui` přítomnost:** parametrizovaný test přes všech 12+1 tools.
+- **CSP shape:** `buildCsp()` vrací správně sestavené domains pro Saleor + media CDN env.
+
+Telemetry (lightweight):
+
+```ts
+// telemetry.ts
+export function logAppView(view: AppResourceKey, agentId?: string): void {
+  // Goes through existing Phase B `logAgentAction()` infrastructure.
+  logAgentAction({
+    agent_id: agentId ?? "anonymous",
+    action: `app.view.${view}`,
+    scope: "catalog.read",  // or appropriate
+    status: "success",
+    status_code: 200,
+    duration_ms: 0,
+  });
+}
+```
+
+Volá se v `loadThemedView()` při fetch resource (host requested → view will render).
+
+Manual smoke test checklist (`docs/mcp-apps-readme.md` appendix):
+1. `pnpm run build:mcp-apps && pnpm run dev`.
+2. `npx cloudflared tunnel --url http://localhost:3000`.
+3. Add to Claude Desktop jako custom connector.
+4. Prompt: "find Ethiopian coffee" → expect product carousel.
+5. Prompt: "show me #2" → expect product detail view swap.
+6. Prompt: "add 1 to cart" → expect cart preview.
+7. Prompt: "checkout" → expect summary, confirm → expect receipt.
+8. Verify each view: tenant siteName v footer, OKLCH colors aplikovány.
+9. Network panel: žádné requests mimo Saleor + image CDN origins.
+
+Spec audit step (jako poslední dílčí činnost před PR merge):
+- WebFetch `https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/draft/apps.mdx`.
+- Diff proti snapshot 2026-01-26 (uložen v `docs/mcp-apps-spec-snapshot-2026-01-26.md` jako evidence).
+- Pokud changed: update `docs/mcp-apps-spec-pinning.md`, případně bumpnout `@modelcontextprotocol/ext-apps` v F1.
+
+CLAUDE.md sekce update:
+
+```markdown
+### MCP Apps (Fáze F)
+
+Storefront supportuje **MCP Apps** spec (2026-01-26). 12+1 MCP tools deklarují
+`_meta.ui.resourceUri`; hosty s MCP Apps podporou (Claude, VS Code Copilot, Goose,
+Postman, MCPJam) rendují tool results jako visual UI (product carousels, cart
+preview, checkout summary, order receipt) místo JSON dumpů.
+
+- **Resource serving:** `GET /mcp` JSON-RPC `resources/read` na `ui://saleor/*.html`
+- **Bundle:** Vite single-file, ~150–220 KB gzipped per view, 6 views total
+- **Branding:** runtime injection `brand.css` + `brandConfig` přes `window.__BRAND__`
+- **Fallback:** `MCP_APPS_ENABLED=false` → plain JSON response (no breaking change)
+- **Spec pinning:** viz `docs/mcp-apps-spec-pinning.md`
+```
+
+**Acceptance:**
+
+- [ ] `pnpm test` projde, coverage delta ≥ 90% pro `src/mcp-server/apps/**` a `src/mcp-apps/src/**` (excluding `entries/*.tsx` které jsou bootstrap-only).
+- [ ] `pnpm exec tsc --noEmit` clean napříč root a `src/mcp-apps/tsconfig.json`.
+- [ ] `pnpm lint` clean.
+- [ ] Manual smoke test (`docs/mcp-apps-readme.md` 9-bodový checklist) signed-off Jirkou.
+- [ ] `CLAUDE.md` má "MCP Apps" sekci s linkem na `mcp-apps-readme.md`.
+- [ ] `## Stav implementace` v plánu obsahuje řádky pro F1–F8 s datem + commit hash.
+- [ ] Spec audit proveden, případné delta-y zalogovány v `docs/mcp-apps-spec-pinning.md`.
+- [ ] Telemetry zaznamenává `app.view.*` eventy do `AgentActivity` collection (Phase B infra).
+- [ ] **Announcement post** v `docs/announcements/2026-mcp-apps-launch.md` (nový) — 1-pager pro Algaweb klienty popisující co se mění pro jejich uživatele v Claude.
+
+**Notes:**
+
+- **Telemetry caveat:** logování při každém resource fetch může být noisy (host preloads UI resources speculatively per spec). Mitigation: log jen na **první** resource fetch v dané MCP session — vyžaduje session correlation, což stateless `/mcp` route nemá. Fallback: log unconditionally, retention/dedup v Phase E control panel.
+- **Future hook do Phase D:** Comgate/GoPay payment redirect dostává krásnou intégrační pointu — `ui/open-link` na hosted payment URL je clean alternativa proti embedded payment UI. To se ale finalizuje až v D.
+- **Future hook do Phase E:** Per-tenant control panel (E1) bude exponovat toggle `MCP_APPS_ENABLED` per channel + nahrávání custom logo / brand colors pro views. Phase F konec dělá infrastrukturu k tomu připravenou — F2 už čte `brandConfig` runtime, F8 jen zařadí do Payload tenant fields backlog.
 
 ---
 
