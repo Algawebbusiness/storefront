@@ -27,6 +27,11 @@ import {
 	type CheckoutCompleteData,
 } from "@/lib/protocols/shared/checkout-queries";
 import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
+import {
+	buildApprovalUrl,
+	createPendingApproval,
+	requiresApproval,
+} from "@/lib/protocols/shared/approvals";
 
 interface CompleteCheckoutBody {
 	payment: {
@@ -83,6 +88,28 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 		return signedJsonResponse(
 			{ error: { code: "not_found", message: "Checkout session not found" } },
 			{ status: 404 },
+		);
+	}
+
+	// Phase B6: high-value checkouts require merchant approval before paying.
+	// Reads APPROVAL_THRESHOLD_CENTS env (per-tenant override comes in Phase E).
+	const totalCents = Math.round(fetchResult.data.checkout.totalPrice.gross.amount * 100);
+	if (requiresApproval(totalCents)) {
+		const approval = await createPendingApproval({
+			agent_id: auth.agentId ?? "unknown",
+			action: "checkout.complete",
+			resource_id: id,
+			amount_cents: totalCents,
+			reason: `Cart total ${totalCents}¢ exceeds APPROVAL_THRESHOLD_CENTS`,
+		});
+		return signedJsonResponse(
+			{
+				status: "pending_approval",
+				approval_id: approval.id,
+				approval_url: buildApprovalUrl(approval.id),
+				approval_expires_at: approval.expires_at,
+			},
+			{ status: 202 },
 		);
 	}
 
