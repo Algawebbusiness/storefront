@@ -44,6 +44,14 @@ export const CHECKOUT_FRAGMENT = `
             url
             type
           }
+          attributes {
+            attribute {
+              slug
+            }
+            values {
+              slug
+            }
+          }
         }
       }
     }
@@ -429,6 +437,17 @@ export interface SaleorCheckoutLine {
 			slug: string;
 			thumbnail: { url: string } | null;
 			media: Array<{ url: string; type: string }>;
+			/**
+			 * Product attributes. Used by the disclosures module (Phase C5) to
+			 * detect `disclosure_type` markers (alcohol, dietary_supplement, …)
+			 * and emit cart warnings + eligibility requirements. Optional so
+			 * cached SaleorCheckout payloads from pre-C5 deployments keep
+			 * round-tripping.
+			 */
+			attributes?: Array<{
+				attribute: { slug: string };
+				values: Array<{ slug: string }>;
+			}>;
 		};
 	};
 }

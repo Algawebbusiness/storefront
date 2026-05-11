@@ -13,6 +13,12 @@
 
 import { extractContextFromMetadata } from "./context-mapper";
 import {
+	DISCLOSURE_ATTRIBUTE_SLUG,
+	attachDisclosureSlugs,
+	buildLineDisclosures,
+	registerDisclosureEligibilityChecker,
+} from "./disclosures";
+import {
 	checkEligibility,
 	type EligibilityClaim,
 	type EligibilityRequirement,
@@ -20,6 +26,8 @@ import {
 import { toMinorUnits } from "./money";
 import type { SaleorCheckout } from "./checkout-queries";
 import type { ProtocolMoney, UcpContext } from "./types";
+
+registerDisclosureEligibilityChecker();
 
 /** UCP cart line — one product variant with a quantity */
 export interface UcpCartLine {
@@ -84,11 +92,13 @@ export function mapCheckoutToCart(
 ): UcpCart {
 	const currency = checkout.totalPrice.gross.currency;
 
+	const lineWarnings: UcpCartWarning[] = [];
+
 	const lines: UcpCartLine[] = checkout.lines.map((line) => {
 		const image =
 			line.variant.product.thumbnail?.url ?? line.variant.product.media.find((m) => m.type === "IMAGE")?.url;
 
-		return {
+		const ucpLine: UcpCartLine = {
 			id: line.id,
 			sku: line.variant.sku,
 			product_id: line.variant.product.id,
@@ -99,6 +109,21 @@ export function mapCheckoutToCart(
 			total_price: toMinorUnits(line.totalPrice.gross),
 			...(image ? { image_url: image } : {}),
 		};
+
+		// C5: surface product-level disclosures as cart warnings and stash the
+		// slug list on the line so the disclosure eligibility checker can find
+		// it without re-walking attribute trees.
+		const attrs = line.variant.product.attributes ?? [];
+		const disclosureSlugs = attrs
+			.filter((a) => a.attribute.slug === DISCLOSURE_ATTRIBUTE_SLUG)
+			.flatMap((a) => a.values.map((v) => v.slug))
+			.filter(Boolean);
+		if (disclosureSlugs.length > 0) {
+			attachDisclosureSlugs(ucpLine, disclosureSlugs);
+			lineWarnings.push(...buildLineDisclosures(line));
+		}
+
+		return ucpLine;
 	});
 
 	const totals: UcpCartTotals = {
@@ -119,6 +144,10 @@ export function mapCheckoutToCart(
 
 	if (checkout.discount && checkout.discount.amount > 0) {
 		cart.applied_discounts = [{ amount: toMinorUnits(checkout.discount) }];
+	}
+
+	if (lineWarnings.length > 0) {
+		cart.warnings = lineWarnings;
 	}
 
 	const context = extractContextFromMetadata(checkout.metadata);
