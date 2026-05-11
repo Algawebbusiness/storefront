@@ -1,10 +1,77 @@
 # CLAUDE.md — Algaweb E-commerce Platform
 
-> **Active implementation plan:** [`agentic-commerce-2026-plan.md`](./agentic-commerce-2026-plan.md) — 5-phase upgrade na **UCP `2026-04-08`** + Stripe Sessions 2026 (50 kroků). **Foundation A1–A10 dokončena (květen 2026)**, fáze B–E čekají. Před implementační prací načti relevantní krok z toho dokumentu.
+> **Active implementation plan:** [`agentic-commerce-2026-plan.md`](./agentic-commerce-2026-plan.md) — 5-phase upgrade na **UCP `2026-04-08`** + Stripe Sessions 2026 (50 kroků).
+>
+> **Stav implementace (květen 2026):**
+> - **Fáze A (A1–A10): ✅ COMPLETE** — UCP 2026-04-08 parita, ed25519 signed responses, cart/catalog/context/totals/payment-instruments capabilities.
+> - **Fáze B (B1–B10): ✅ COMPLETE** — Agent identity & trust layer (registry + signed requests + activity log + per-agent caps + approval flow + OAuth identity binding + accepted_platforms publishing + 180-day migration timeline + abuse detection). 296/296 tests pass.
+>   - **OPEN:** Route adoption — UCP routes still call legacy `validateAgentApiKey`. Plánovaný route-migration commit přepíše 12 UCP routes na `verifyAgentRequest` + `withAgentActivityLog` wrapper + `checkLimits` před každou mutating operací. Viz [Route migration plan](#route-migration-plan-fáze-b-→-routes) níže.
+> - **Fáze C–E: čekají.** C (post-order/multi-payment) a B mohou běžet paralelně, ale teď půjdeme C po B route adoption.
+>
+> Před implementační prací načti relevantní krok z `agentic-commerce-2026-plan.md`.
 >
 > **Původní PRD:** [`saleor-agent-first-prd.md`](./saleor-agent-first-prd.md) — UCP `2026-01-23` baseline + sekce 10 (deltový update na 2026-04-08).
 >
+> **Migrace AGENT_API_KEYS pro klienty:** [`MIGRATION.md`](./MIGRATION.md) — 180-day dual-mode timeline.
+>
 > **Workspace:** `~/code/storefront/` (mimo Nextcloud, kvůli sync race s `.git/`). Viz `~/Nextcloud/vibecode-migration/STATUS.md`.
+
+## Route migration plan (fáze B → routes)
+
+> Cíl: přejít 12 UCP REST routes z legacy `validateAgentApiKey` (sync) na nový `verifyAgentRequest` (async) + obalit handlery `withAgentActivityLog` + propustit `checkLimits` před každou mutující operací. Žádné nové features — adopce už hotových building blocků z B3, B4, B5.
+
+### Co se mění v každé route
+
+| Před | Po |
+|------|-----|
+| `import { validateAgentApiKey } from "@/lib/protocols/shared/auth";` | `import { verifyAgentRequest } from "@/lib/protocols/shared/auth";` |
+| `const auth = validateAgentApiKey(request);` | `const verify = await verifyAgentRequest(request);` |
+| `if (!auth.valid) return signedUnauthorized();` | `if (!verify.ok) return signedUnauthorized(verify.reason);` |
+| `auth.profileUrl` → `buildUcpMeta(...)` | `verify.profileUrl` → `buildUcpMeta(...)` |
+| `await request.json()` / `await request.text()` | `JSON.parse(verify.bodyText)` (body už byl konzumován middleware) |
+| Mutující route bez limit checku | Před mutací: `await checkLimits(verify.agent, amountCents?, sessionId?)` → 429 pokud blocked |
+| Handler return | Obal celého handleru `withAgentActivityLog({ agent_id, action, scope, resource_id, amount_cents }, async () => {...})` |
+
+### Routes v scope (12)
+
+| # | Route | Action label | Scope guard | Amount track |
+|---|-------|--------------|-------------|--------------|
+| 1 | `POST /api/ucp/rest/carts` | `cart.create` | `cart.create` | — |
+| 2 | `GET /api/ucp/rest/carts/[id]` | `cart.read` | `cart.create` | — |
+| 3 | `PATCH /api/ucp/rest/carts/[id]` | `cart.update` | `cart.update` | — |
+| 4 | `DELETE /api/ucp/rest/carts/[id]` | `cart.cancel` | `cart.update` | — |
+| 5 | `POST /api/ucp/rest/carts/[id]/lines` | `cart.add_line` | `cart.update` | cart total after add |
+| 6 | `PATCH /api/ucp/rest/carts/[id]/lines/[lineId]` | `cart.update_line` | `cart.update` | cart total after update |
+| 7 | `DELETE /api/ucp/rest/carts/[id]/lines/[lineId]` | `cart.remove_line` | `cart.update` | — |
+| 8 | `POST /api/ucp/rest/checkout-sessions` | `checkout.create` | `checkout.create` | — |
+| 9 | `GET/PATCH /api/ucp/rest/checkout-sessions/[id]` | `checkout.read`/`checkout.update` | `checkout.create` | — |
+| 10 | `POST /api/ucp/rest/checkout-sessions/[id]/complete` | `checkout.complete` | `checkout.complete` | **cart total → spending cap check** |
+| 11 | `POST /api/ucp/rest/checkout-sessions/[id]/cancel` | `checkout.cancel` | `checkout.create` | — |
+| 12 | `GET /api/ucp/rest/orders/[id]` | `order.read` | `order.read` | — |
+
+Plus: `GET /api/ucp/rest/approvals/[id]` (B6, čerstvě přidaný) zůstává s `validateAgentApiKey` — je to read-only polling endpoint, agent identity tady stačí v základním tvaru.
+
+ACP routes (`/api/acp/*`) **nejsou v scope** této migrace — ACP má vlastní version cadence (2026-01-30), agent identity layer pro ACP je samostatný projekt (Phase E).
+
+Catalog routes (`/api/ucp/rest/catalog/*`) jsou GET-only, scope `catalog.read`, žádné amount, žádné limity nad rate. Migrace je cosmetická (změna `validateAgentApiKey` → `verifyAgentRequest`) ale stále hodnotná pro audit log.
+
+### Strategie
+
+1. **Helper soubor** `src/lib/protocols/shared/route-handler.ts` (nový): `withUcpRoute({ action, scope, computeAmount? }, handler)` — kombinuje `verifyAgentRequest` + `hasScope` guard + `checkLimits` + `withAgentActivityLog`. Routes pak deklarativně použijí jeden wrapper místo 4 helperů.
+2. **Migrace per-route** s sed pattern kde je shoda + targeted Edit kde není.
+3. **Test coverage:** existujícím route mappers přidat 1 integration-style test per route group (cart, checkout-sessions, orders) přes `Request` → handler → `Response`. Drží se mimo live Saleor — mockují `saleorQuery`.
+4. **Backwards compat:** legacy bearer (přes `verifyAgentRequest` fallback) stále funguje, jen logguje deprecation. To je B9 dual-mode chování.
+
+### Acceptance po migraci
+
+- [ ] 12 UCP routes nepoužívají `validateAgentApiKey` (grep returns 0).
+- [ ] Každá mutující route obalena `withAgentActivityLog`.
+- [ ] `POST /checkout-sessions/[id]/complete` volá `checkLimits` s cart totalem.
+- [ ] Routes vrací 403 s `verify.reason` když agent nemá scope (nový kód, dosud nereachable).
+- [ ] Existující 296 testů pass + nové route handler tests.
+- [ ] Legacy bearer + `AGENT_API_KEYS` flow stále funguje (B9 timeline).
+
+Změna je čistě infrastructure adopce. Žádný nový feature surface, žádná breaking změna pro agenty kteří už používají signed requests.
 
 ## Kdo jsem a co děláme
 
