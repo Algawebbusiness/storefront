@@ -198,6 +198,41 @@ export function estimateRefundCents(
 	return { amount_cents: total, currency };
 }
 
+/**
+ * Update the in-memory record's status. Returns the updated record or
+ * `undefined` if no record with the given id exists. Used by the webhook
+ * handler when Saleor confirms / rejects the refund and by the polling
+ * endpoint when reading a state-changed record.
+ */
+export function updateReturnStatus(
+	id: string,
+	status: ReturnStatus,
+): OrderReturn | undefined {
+	const existing = returnsStore.get(id);
+	if (!existing) return undefined;
+	const updated: OrderReturn = {
+		...existing,
+		status,
+		updated_at: new Date().toISOString(),
+	};
+	returnsStore.set(id, updated);
+	return updated;
+}
+
+/**
+ * Find the most recent pending return for a Saleor order. Used by webhook
+ * handlers that receive an `ORDER_REFUNDED` event and need to attribute it
+ * to a specific return record. We pick the newest by `created_at` so a
+ * second refund (e.g., merchant manually refunds shipping later) doesn't
+ * back-fill a previously settled return.
+ */
+export function findPendingReturnForOrder(orderId: string): OrderReturn | undefined {
+	const matches = Array.from(returnsStore.values())
+		.filter((r) => r.order_id === orderId && r.status === "pending")
+		.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+	return matches[0];
+}
+
 /** Create a return record and persist it. C1 just stores `pending`. */
 export async function createReturnRecord(input: CreateReturnInput, order: SaleorOrder): Promise<OrderReturn> {
 	const id = generateReturnId();

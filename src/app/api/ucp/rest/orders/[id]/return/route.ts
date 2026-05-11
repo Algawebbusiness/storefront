@@ -27,11 +27,13 @@ import {
 	checkReturnEligibility,
 	createReturnRecord,
 	listReturnsForOrder,
+	updateReturnStatus,
 	type CreateReturnInput,
 	type RefundMethod,
 	type ReturnLineRequest,
 	type ReturnReason,
 } from "@/lib/protocols/shared/return-mapper";
+import { triggerSaleorRefund } from "@/lib/protocols/shared/return-queries";
 import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
 import { saleorQuery } from "@/mcp-server/saleor-client";
@@ -165,7 +167,38 @@ export const POST = withUcpRoute<OrderParams>(
 			...(body.webhook_url ? { webhook_url: body.webhook_url } : {}),
 		};
 
-		const record = await createReturnRecord(input, order);
+		let record = await createReturnRecord(input, order);
+
+		// C2: for full-order returns (no specific lines + original_payment) we
+		// trigger the Saleor orderRefund immediately. Partial / store-credit
+		// flows stay `pending` and the merchant completes them from Saleor
+		// admin until a later phase handles fulfillment-line mapping.
+		const isFullOrderRefund = (!lines || lines.length === 0) && refundMethod === "original_payment";
+		if (isFullOrderRefund) {
+			const refundResult = await triggerSaleorRefund({
+				orderId: order.id,
+				amountMajorUnits: order.total.gross.amount,
+			});
+			if (refundResult.ok) {
+				// Saleor accepted the refund; webhook (ORDER_REFUNDED) will move
+				// us to `refunded` once payment settles.
+				record = updateReturnStatus(record.id, "approved") ?? record;
+			} else if (refundResult.reason !== "unconfigured") {
+				// Real refund failure — surface as 502 so the agent can retry.
+				console.warn(`[returns] Saleor refund failed for ${record.id}: ${refundResult.reason}`);
+				return signedJsonResponse(
+					{
+						error: {
+							code: "refund_failed",
+							message: `Refund could not be initiated: ${refundResult.reason}`,
+						},
+						return_id: record.id,
+					},
+					{ status: 502 },
+				);
+			}
+			// `unconfigured` ⇒ keep `pending`; merchant finishes via Saleor admin.
+		}
 
 		const ucpMeta = await buildUcpMeta(auth.profileUrl);
 		return signedJsonResponse(

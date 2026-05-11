@@ -14,6 +14,10 @@ import {
 	extractContextFromMetadata,
 	type SaleorMetadataItem,
 } from "@/lib/protocols/shared/context-mapper";
+import {
+	findPendingReturnForOrder,
+	updateReturnStatus,
+} from "@/lib/protocols/shared/return-mapper";
 
 const WEBHOOK_SECRET = process.env.SALEOR_WEBHOOK_SECRET;
 const SALEOR_API_URL = process.env.NEXT_PUBLIC_SALEOR_API_URL;
@@ -122,7 +126,9 @@ type OrderEvent =
 	| "ORDER_CREATED"
 	| "ORDER_FULFILLED"
 	| "ORDER_CANCELLED"
-	| "ORDER_PAID";
+	| "ORDER_PAID"
+	| "ORDER_REFUNDED"
+	| "ORDER_RETURN_REQUESTED";
 
 interface WebhookPayload {
 	event?: string;
@@ -149,6 +155,8 @@ function isKnownOrderEvent(event: string): event is OrderEvent {
 		"ORDER_FULFILLED",
 		"ORDER_CANCELLED",
 		"ORDER_PAID",
+		"ORDER_REFUNDED",
+		"ORDER_RETURN_REQUESTED",
 	].includes(event);
 }
 
@@ -231,6 +239,30 @@ export async function POST(request: Request): Promise<Response> {
 		case "ORDER_PAID":
 			console.log(
 				`[Webhook/Saleor] ORDER_PAID — order #${safeOrderNumber} (${safeOrderId}) isPaid: ${orderData?.isPaid ?? "unknown"}`,
+			);
+			break;
+
+		case "ORDER_REFUNDED":
+			console.log(
+				`[Webhook/Saleor] ORDER_REFUNDED — order #${safeOrderNumber} (${safeOrderId})`,
+			);
+			if (orderData?.id) {
+				const pending = findPendingReturnForOrder(orderData.id);
+				if (pending) {
+					updateReturnStatus(pending.id, "refunded");
+					console.log(
+						`[Webhook/Saleor] return ${pending.id} → refunded (order ${safeOrderId})`,
+					);
+				}
+			}
+			break;
+
+		case "ORDER_RETURN_REQUESTED":
+			// Surfaced when the merchant initiates a return from Saleor admin.
+			// We don't auto-create an agent return record (no agent context),
+			// but we log so the audit trail is complete.
+			console.log(
+				`[Webhook/Saleor] ORDER_RETURN_REQUESTED — order #${safeOrderNumber} (${safeOrderId})`,
 			);
 			break;
 	}
