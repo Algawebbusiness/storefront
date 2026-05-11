@@ -9,7 +9,100 @@
 
 import { createHmac, timingSafeEqual } from "crypto";
 
+import {
+	contextToMetadataInput,
+	extractContextFromMetadata,
+	type SaleorMetadataItem,
+} from "@/lib/protocols/shared/context-mapper";
+
 const WEBHOOK_SECRET = process.env.SALEOR_WEBHOOK_SECRET;
+const SALEOR_API_URL = process.env.NEXT_PUBLIC_SALEOR_API_URL;
+const SALEOR_APP_TOKEN = process.env.SALEOR_APP_TOKEN;
+
+/**
+ * Propagate UCP `context` (intent, buyer_preferences, agent_session_id) from
+ * the source checkout's metadata to the order's metadata when an order is
+ * created (Phase A7).
+ *
+ * Best effort: needs SALEOR_APP_TOKEN with MANAGE_ORDERS permission.
+ * Without the token we log and skip — the order is otherwise unaffected.
+ */
+async function propagateIntentToOrder(orderId: string): Promise<void> {
+	if (!SALEOR_API_URL || !SALEOR_APP_TOKEN) {
+		console.log(
+			"[Webhook/Saleor] Intent propagation skipped: SALEOR_API_URL or SALEOR_APP_TOKEN not set",
+		);
+		return;
+	}
+
+	const fetchOrderQuery = `
+		query OrderForIntentPropagation($id: ID!) {
+			order(id: $id) { id checkoutId metadata { key value } }
+		}
+	`;
+	const fetchCheckoutQuery = `
+		query CheckoutMetadataForIntent($id: ID!) {
+			checkout(id: $id) { metadata { key value } }
+		}
+	`;
+	const writeMetadataMutation = `
+		mutation OrderUpdateMetadata($id: ID!, $input: [MetadataInput!]!) {
+			updateMetadata(id: $id, input: $input) { errors { field message code } }
+		}
+	`;
+
+	type GraphQLResponse<T> = { data?: T; errors?: Array<{ message: string }> };
+	async function adminFetch<T>(query: string, variables: Record<string, unknown>): Promise<T | null> {
+		try {
+			const res = await fetch(SALEOR_API_URL!, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${SALEOR_APP_TOKEN}`,
+				},
+				body: JSON.stringify({ query, variables }),
+			});
+			if (!res.ok) return null;
+			const json = (await res.json()) as GraphQLResponse<T>;
+			if (json.errors && json.errors.length > 0) return null;
+			return json.data ?? null;
+		} catch {
+			return null;
+		}
+	}
+
+	type OrderData = {
+		order: { id: string; checkoutId: string | null; metadata: SaleorMetadataItem[] } | null;
+	};
+	const orderData = await adminFetch<OrderData>(fetchOrderQuery, { id: orderId });
+	if (!orderData?.order || !orderData.order.checkoutId) {
+		console.log(`[Webhook/Saleor] Intent propagation: order ${orderId} has no source checkoutId`);
+		return;
+	}
+
+	// Idempotent: skip if order already has context (webhook retries).
+	if (extractContextFromMetadata(orderData.order.metadata)) return;
+
+	type CheckoutData = { checkout: { metadata: SaleorMetadataItem[] } | null };
+	const checkoutData = await adminFetch<CheckoutData>(fetchCheckoutQuery, {
+		id: orderData.order.checkoutId,
+	});
+	const context = extractContextFromMetadata(checkoutData?.checkout?.metadata);
+	if (!context) return;
+
+	const input = contextToMetadataInput(context);
+	if (!input) return;
+
+	type WriteData = { updateMetadata: { errors: Array<{ message: string }> } };
+	const written = await adminFetch<WriteData>(writeMetadataMutation, { id: orderId, input });
+	if (!written || written.updateMetadata.errors.length > 0) {
+		console.warn(
+			`[Webhook/Saleor] Intent propagation failed for order ${orderId}: ${written ? written.updateMetadata.errors.map((e) => e.message).join("; ") : "fetch error"}`,
+		);
+		return;
+	}
+	console.log(`[Webhook/Saleor] Intent propagated from checkout to order ${orderId}`);
+}
 
 /** Verify Saleor webhook HMAC signature */
 function verifyWebhookSignature(body: string, signature: string, secret: string): boolean {
@@ -118,6 +211,9 @@ export async function POST(request: Request): Promise<Response> {
 			console.log(
 				`[Webhook/Saleor] ORDER_CREATED — order #${safeOrderNumber} (${safeOrderId})`,
 			);
+			if (orderData?.id) {
+				await propagateIntentToOrder(orderData.id);
+			}
 			break;
 
 		case "ORDER_FULFILLED":

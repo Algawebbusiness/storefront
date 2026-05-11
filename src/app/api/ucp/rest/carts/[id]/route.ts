@@ -1,8 +1,8 @@
 /**
  * UCP REST — Read / update / cancel cart
  *
- * GET    /api/ucp/rest/carts/:id  → read cart
- * PATCH  /api/ucp/rest/carts/:id  → store {intent?, notes?} into Saleor metadata
+ * GET    /api/ucp/rest/carts/:id  → read cart (includes echoed `context`)
+ * PATCH  /api/ucp/rest/carts/:id  → update agent context: { context: { intent?, buyer_preferences?, session_id? } }
  * DELETE /api/ucp/rest/carts/:id  → return cart with status="cancelled" (Saleor
  *                                    has no native cart cancel; the checkout TTL
  *                                    will clean it up)
@@ -16,17 +16,18 @@ import {
 	type CheckoutByIdData,
 	type UpdateMetadataData,
 } from "@/lib/protocols/shared/checkout-queries";
+import { contextToMetadataInput, validateContext } from "@/lib/protocols/shared/context-mapper";
 import {
 	signedJsonResponse,
 	signedProtocolDisabled,
 	signedUnauthorized,
 } from "@/lib/protocols/shared/response";
+import type { UcpContext } from "@/lib/protocols/shared/types";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
 import { saleorQuery } from "@/mcp-server/saleor-client";
 
 interface PatchCartBody {
-	intent?: string;
-	notes?: string;
+	context?: UcpContext;
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -78,6 +79,19 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 		}
 	}
 
+	const contextValidation = validateContext(body.context);
+	if (!contextValidation.ok) {
+		return signedJsonResponse(
+			{
+				error: {
+					code: "bad_request",
+					message: contextValidation.errors.map((e) => `${e.field}: ${e.message}`).join("; "),
+				},
+			},
+			{ status: 400 },
+		);
+	}
+
 	// Verify cart exists.
 	const fetchResult = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
 	if (!fetchResult.ok) {
@@ -90,11 +104,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 		return signedJsonResponse({ error: { code: "not_found", message: "Cart not found" } }, { status: 404 });
 	}
 
-	const metadataInput: Array<{ key: string; value: string }> = [];
-	if (body.intent !== undefined) metadataInput.push({ key: "ucp.intent", value: body.intent });
-	if (body.notes !== undefined) metadataInput.push({ key: "ucp.notes", value: body.notes });
+	const metadataInput = contextToMetadataInput(body.context, contextValidation.buyerPreferencesJson);
 
-	if (metadataInput.length > 0) {
+	if (metadataInput) {
 		const metaResult = await saleorQuery<UpdateMetadataData>(UPDATE_METADATA_MUTATION, {
 			id,
 			input: metadataInput,
@@ -118,7 +130,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 		}
 	}
 
-	// Re-fetch so totals/warnings reflect any cart-level state change.
+	// Re-fetch so the cart response reflects the freshly written context.
 	const refetch = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
 	const checkout = refetch.ok && refetch.data.checkout ? refetch.data.checkout : fetchResult.data.checkout;
 

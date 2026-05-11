@@ -20,17 +20,22 @@ import { protocolToSaleor } from "@/lib/protocols/shared/address";
 import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
 import {
+	CHECKOUT_BY_ID_QUERY,
 	CHECKOUT_CREATE_MUTATION,
 	CHECKOUT_EMAIL_UPDATE_MUTATION,
 	CHECKOUT_SHIPPING_ADDRESS_UPDATE_MUTATION,
 	CHECKOUT_BILLING_ADDRESS_UPDATE_MUTATION,
+	UPDATE_METADATA_MUTATION,
+	type CheckoutByIdData,
 	type CheckoutCreateData,
 	type CheckoutEmailUpdateData,
 	type CheckoutShippingAddressUpdateData,
 	type CheckoutBillingAddressUpdateData,
 	type SaleorCheckout,
+	type UpdateMetadataData,
 } from "@/lib/protocols/shared/checkout-queries";
-import type { ProtocolAddress } from "@/lib/protocols/shared/types";
+import { contextToMetadataInput, validateContext } from "@/lib/protocols/shared/context-mapper";
+import type { ProtocolAddress, UcpContext } from "@/lib/protocols/shared/types";
 
 interface CreateCheckoutBody {
 	line_items: Array<{ variant_id: string; quantity: number }>;
@@ -39,6 +44,7 @@ interface CreateCheckoutBody {
 		shipping_address?: ProtocolAddress & { first_name?: string; last_name?: string; phone?: string };
 		billing_address?: ProtocolAddress & { first_name?: string; last_name?: string; phone?: string };
 	};
+	context?: UcpContext;
 }
 
 export async function POST(request: Request) {
@@ -64,6 +70,19 @@ export async function POST(request: Request) {
 	if (!body.line_items || !Array.isArray(body.line_items) || body.line_items.length === 0) {
 		return signedJsonResponse(
 			{ error: { code: "bad_request", message: "line_items is required and must be non-empty" } },
+			{ status: 400 },
+		);
+	}
+
+	const contextValidation = validateContext(body.context);
+	if (!contextValidation.ok) {
+		return signedJsonResponse(
+			{
+				error: {
+					code: "bad_request",
+					message: contextValidation.errors.map((e) => `${e.field}: ${e.message}`).join("; "),
+				},
+			},
 			{ status: 400 },
 		);
 	}
@@ -150,6 +169,21 @@ export async function POST(request: Request) {
 
 		if (billingResult.ok && billingResult.data.checkoutBillingAddressUpdate.checkout) {
 			checkout = billingResult.data.checkoutBillingAddressUpdate.checkout;
+		}
+	}
+
+	// Persist agent context to Saleor metadata if provided (Phase A7).
+	const metadataInput = contextToMetadataInput(body.context, contextValidation.buyerPreferencesJson);
+	if (metadataInput) {
+		const metaResult = await saleorQuery<UpdateMetadataData>(UPDATE_METADATA_MUTATION, {
+			id: checkout.id,
+			input: metadataInput,
+		});
+		if (metaResult.ok) {
+			const refetch = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id: checkout.id });
+			if (refetch.ok && refetch.data.checkout) {
+				checkout = refetch.data.checkout;
+			}
 		}
 	}
 

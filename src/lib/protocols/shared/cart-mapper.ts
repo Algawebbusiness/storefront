@@ -11,9 +11,10 @@
  * always populates from the channel default.
  */
 
+import { extractContextFromMetadata } from "./context-mapper";
 import { toMinorUnits } from "./money";
 import type { SaleorCheckout } from "./checkout-queries";
-import type { ProtocolMoney } from "./types";
+import type { ProtocolMoney, UcpContext } from "./types";
 
 /** UCP cart line — one product variant with a quantity */
 export interface UcpCartLine {
@@ -61,6 +62,8 @@ export interface UcpCart {
 	totals: UcpCartTotals;
 	applied_discounts?: UcpAppliedDiscount[];
 	warnings?: UcpCartWarning[];
+	/** Agent-supplied context echoed back from Saleor metadata (Phase A7). */
+	context?: UcpContext;
 }
 
 /** Map a Saleor Checkout into the UCP cart shape. */
@@ -105,6 +108,11 @@ export function mapCheckoutToCart(
 
 	if (checkout.discount && checkout.discount.amount > 0) {
 		cart.applied_discounts = [{ amount: toMinorUnits(checkout.discount) }];
+	}
+
+	const context = extractContextFromMetadata(checkout.metadata);
+	if (context) {
+		cart.context = context;
 	}
 
 	return cart;

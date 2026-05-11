@@ -2,10 +2,17 @@
  * Maps Saleor checkout state to protocol format (used by both ACP and UCP).
  */
 
-import type { CheckoutStatus, ProtocolLineItem, ProtocolMoney, ProtocolTotals } from "./types";
+import type {
+	CheckoutStatus,
+	ProtocolLineItem,
+	ProtocolMoney,
+	ProtocolTotals,
+	UcpContext,
+} from "./types";
 import type { SaleorCheckout, SaleorCheckoutAddress, SaleorShippingMethod } from "./checkout-queries";
 import { toMinorUnits } from "./money";
 import { saleorToProtocol } from "./address";
+import { extractContextFromMetadata } from "./context-mapper";
 import type { ProtocolAddress, SaleorAddress } from "./types";
 
 const STOREFRONT_URL = process.env.NEXT_PUBLIC_STOREFRONT_URL || "http://localhost:3000";
@@ -31,6 +38,8 @@ export interface ProtocolCheckout {
 	delivery_method: { id: string; name: string } | null;
 	available_shipping_methods: ProtocolShippingMethod[];
 	continue_url: string;
+	/** Agent-supplied context echoed back from Saleor metadata (Phase A7). */
+	context?: UcpContext;
 }
 
 /** Convert a Saleor checkout address to SaleorAddress type for address mapper */
@@ -119,7 +128,7 @@ export function mapCheckoutToProtocol(checkout: SaleorCheckout): ProtocolCheckou
 		total: toMinorUnits(checkout.totalPrice.gross),
 	};
 
-	return {
+	const result: ProtocolCheckout = {
 		id: checkout.id,
 		status: mapCheckoutStatus(checkout),
 		email: checkout.email,
@@ -135,4 +144,11 @@ export function mapCheckoutToProtocol(checkout: SaleorCheckout): ProtocolCheckou
 		available_shipping_methods: checkout.shippingMethods.map(mapShippingMethod),
 		continue_url: `${STOREFRONT_URL}/checkout?id=${checkout.id}`,
 	};
+
+	const context = extractContextFromMetadata(checkout.metadata);
+	if (context) {
+		result.context = context;
+	}
+
+	return result;
 }

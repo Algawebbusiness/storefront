@@ -68,6 +68,22 @@ export interface ProtocolTotals {
 	total: ProtocolMoney;
 }
 
+/**
+ * Agent-supplied context attached to cart / checkout / order (Phase A7).
+ *
+ * Per UCP 2026-04-08 the agent may pass a free-form `intent` string and a
+ * structured `buyer_preferences` object. We persist the whole context into
+ * Saleor metadata and surface it back in cart/checkout/order responses.
+ */
+export interface UcpContext {
+	/** Free-form intent. Max 500 chars. */
+	intent?: string;
+	/** Structured preferences. JSON-stringified to ≤2000 chars in metadata. */
+	buyer_preferences?: Record<string, unknown>;
+	/** Opaque session identifier for audit / log correlation. */
+	session_id?: string;
+}
+
 /** Result of agent authentication */
 export interface AgentAuthResult {
 	valid: boolean;

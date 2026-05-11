@@ -22,6 +22,7 @@ function makeCheckout(overrides: Partial<SaleorCheckout> = {}): SaleorCheckout {
 		isShippingRequired: true,
 		authorizeStatus: "NONE",
 		chargeStatus: "NONE",
+		metadata: [],
 	};
 	return { ...base, ...overrides };
 }

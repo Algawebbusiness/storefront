@@ -128,6 +128,10 @@ export const CHECKOUT_FRAGMENT = `
     isShippingRequired
     authorizeStatus
     chargeStatus
+    metadata {
+      key
+      value
+    }
   }
 `;
 
@@ -456,6 +460,7 @@ export interface SaleorCheckout {
 	isShippingRequired: boolean;
 	authorizeStatus: string;
 	chargeStatus: string;
+	metadata: Array<{ key: string; value: string }>;
 }
 
 export interface SaleorCheckoutError {
