@@ -14,6 +14,7 @@ import {
 	extractContextFromMetadata,
 	type SaleorMetadataItem,
 } from "@/lib/protocols/shared/context-mapper";
+import { notifyAgent } from "@/lib/protocols/shared/agent-webhooks";
 import {
 	findPendingReturnForOrder,
 	updateReturnStatus,
@@ -249,10 +250,28 @@ export async function POST(request: Request): Promise<Response> {
 			if (orderData?.id) {
 				const pending = findPendingReturnForOrder(orderData.id);
 				if (pending) {
-					updateReturnStatus(pending.id, "refunded");
+					const updated = updateReturnStatus(pending.id, "refunded");
 					console.log(
 						`[Webhook/Saleor] return ${pending.id} → refunded (order ${safeOrderId})`,
 					);
+					// C3: push status to the agent's webhook if one was registered.
+					// Best-effort, fire-and-forget — we never block the Saleor
+					// webhook response on outbound delivery.
+					if (updated?.webhook_url) {
+						void notifyAgent(updated.webhook_url, {
+							type: "return.refunded",
+							resource_type: "return",
+							resource_id: updated.id,
+							agent_id: updated.agent_id,
+							payload: {
+								order_id: updated.order_id,
+								status: updated.status,
+								refund_method: updated.refund_method,
+								estimated_refund_cents: updated.estimated_refund_cents,
+								currency: updated.currency,
+							},
+						});
+					}
 				}
 			}
 			break;
