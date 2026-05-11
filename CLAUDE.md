@@ -6,7 +6,8 @@
 > - **Fáze A (A1–A10): ✅ COMPLETE** — UCP 2026-04-08 parita, ed25519 signed responses, cart/catalog/context/totals/payment-instruments capabilities.
 > - **Fáze B (B1–B10): ✅ COMPLETE** — Agent identity & trust layer (registry + signed requests + activity log + per-agent caps + approval flow + OAuth identity binding + accepted_platforms publishing + 180-day migration timeline + abuse detection). 296/296 tests pass.
 > - **Fáze B route adoption: ✅ COMPLETE** — 12 UCP REST routes přepsány na `withUcpRoute()` (kombinuje `verifyAgentRequest` + `hasScope` + `checkLimits` + `withAgentActivityLog`). `POST /checkout-sessions/[id]/complete` enforcuje per-session spending cap *před* Saleor mutací i Stripe nabitím. 315/315 tests pass (+19 nových).
-> - **Fáze C–E: čekají.** C (post-order/multi-payment) může běžet teď.
+> - **Fáze C (C1–C10): ✅ COMPLETE** — Returns capability + Saleor refund wiring + webhook ORDER_REFUNDED + agent-webhook delivery (retry+sign) + eligibility framework + disclosure contracts + payment-handler registry + Stripe Link / stablecoin / MPP handlers + loyalty capability. 394/394 tests pass.
+> - **Fáze D–E: čekají.** D = Czech moat (Comgate, GoPay, Zásilkovna jako UCP fulfillment, ARES IČO/DIČ).
 >
 > Před implementační prací načti relevantní krok z `agentic-commerce-2026-plan.md`.
 >

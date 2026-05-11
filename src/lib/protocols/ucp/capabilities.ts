@@ -91,6 +91,18 @@ export const SHOPPING_RETURNS: CapabilityDef = {
 	extends: SHOPPING_CHECKOUT.id,
 };
 
+/**
+ * Loyalty capability — agent applies gift cards, vouchers, or membership
+ * points to a cart. Added in Phase C10. Backed by Saleor's checkoutAddPromoCode
+ * mutation (gift cards and vouchers share the endpoint).
+ */
+export const SHOPPING_LOYALTY: CapabilityDef = {
+	id: "dev.ucp.shopping.loyalty",
+	spec: "loyalty",
+	schema: "schemas/shopping/loyalty.json",
+	extends: SHOPPING_DISCOUNT.id,
+};
+
 /** All capabilities advertised in /.well-known/ucp. */
 export const ALL_BUSINESS_CAPABILITIES: readonly CapabilityDef[] = [
 	SHOPPING_CHECKOUT,
@@ -99,6 +111,7 @@ export const ALL_BUSINESS_CAPABILITIES: readonly CapabilityDef[] = [
 	SHOPPING_CART,
 	SHOPPING_CATALOG,
 	SHOPPING_RETURNS,
+	SHOPPING_LOYALTY,
 ];
 
 /** Map of capability ID → versions, derived from ALL_BUSINESS_CAPABILITIES. */
