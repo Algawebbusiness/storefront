@@ -13,7 +13,7 @@
  * - No tokens in URL — only POST body
  */
 
-import { getClient, verifyClientSecret } from "@/lib/oauth/config";
+import { getAgentForOauthClient, getClient, verifyClientSecret } from "@/lib/oauth/config";
 import { consumeAuthorizationCode } from "@/lib/oauth/codes";
 import { verifyPkce } from "@/lib/oauth/pkce";
 import { createTokenPair, verifyJwt, revokeRefreshToken, isRefreshTokenRevoked } from "@/lib/oauth/tokens";
@@ -102,6 +102,7 @@ async function handleAuthorizationCodeGrant(body: TokenRequest, clientId: string
 
 	// ── Issue tokens ──
 
+	const agentId = getAgentForOauthClient(clientId) ?? undefined;
 	const tokens = createTokenPair({
 		userId: stored.userId,
 		email: stored.userEmail,
@@ -109,9 +110,13 @@ async function handleAuthorizationCodeGrant(body: TokenRequest, clientId: string
 		clientId,
 		saleorToken: stored.saleorAccessToken,
 		saleorRefreshToken: stored.saleorRefreshToken,
+		agentId,
 	});
 
-	console.log(`[OAuth] Token issued: client=${clientId} user=${stored.userId} scope=${stored.scope}`);
+	console.log(
+		`[OAuth] Token issued: client=${clientId} user=${stored.userId} scope=${stored.scope}` +
+			(agentId ? ` agent=${agentId}` : ""),
+	);
 
 	return Response.json({
 		access_token: tokens.access_token,
@@ -155,6 +160,8 @@ async function handleRefreshTokenGrant(body: TokenRequest, clientId: string) {
 	// Re-use the Saleor refresh token to get new Saleor tokens
 	// For simplicity, we create new OAuth tokens with the same Saleor tokens
 	// In production, you'd call Saleor tokenRefresh here
+	// Preserve agent_id binding across refresh — fall back to current client mapping if absent.
+	const agentId = payload.agent_id ?? getAgentForOauthClient(clientId) ?? undefined;
 	const tokens = createTokenPair({
 		userId: payload.sub,
 		email: payload.email,
@@ -162,6 +169,7 @@ async function handleRefreshTokenGrant(body: TokenRequest, clientId: string) {
 		clientId,
 		saleorToken: payload.saleor_token || "",
 		saleorRefreshToken: payload.saleor_refresh_token || "",
+		agentId,
 	});
 
 	console.log(`[OAuth] Token refreshed: client=${clientId} user=${payload.sub}`);

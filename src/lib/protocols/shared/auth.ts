@@ -227,7 +227,11 @@ async function verifySignedRequest(
 	};
 }
 
-function verifyOAuthBearer(token: string, request: Request, bodyText: string): AgentAuthOutcome {
+async function verifyOAuthBearer(
+	token: string,
+	request: Request,
+	bodyText: string,
+): Promise<AgentAuthOutcome> {
 	let payload: JwtPayload | null;
 	try {
 		payload = verifyJwt(token);
@@ -240,14 +244,27 @@ function verifyOAuthBearer(token: string, request: Request, bodyText: string): A
 
 	const profileUrl = extractProfileUrl(request.headers.get("UCP-Agent"));
 
-	// OAuth flows still ride on the synthetic agent until B7 binds an explicit
-	// agent_id claim into the token. The userContext carries the user-scoped
-	// permissions; the agent here is just the legacy stand-in.
+	// Phase B7: if the token carries an agent_id claim, resolve the real
+	// AgentIdentity from the registry. Falls back to SYNTHETIC_LEGACY_AGENT
+	// stamped with the client_id when no mapping exists.
+	let agent: AgentIdentity = {
+		...SYNTHETIC_LEGACY_AGENT,
+		id: payload.client_id ?? "oauth-bearer",
+	};
+	let isLegacy = true;
+	if (payload.agent_id) {
+		const lookup = await lookupAgent(payload.agent_id);
+		if (lookup.found) {
+			agent = lookup.agent;
+			isLegacy = false;
+		}
+	}
+
 	return {
 		ok: true,
-		agent: { ...SYNTHETIC_LEGACY_AGENT, id: payload.client_id ?? "oauth-bearer" },
+		agent,
 		bodyText,
-		isLegacy: true,
+		isLegacy,
 		...(profileUrl ? { profileUrl } : {}),
 		userContext: {
 			userId: payload.sub,

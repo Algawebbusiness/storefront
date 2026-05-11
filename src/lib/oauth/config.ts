@@ -78,6 +78,27 @@ export function getClient(clientId: string): OAuthClient | null {
 }
 
 /**
+ * Phase B7: map an OAuth `client_id` to the agent identity behind it.
+ *
+ * Reads `OAUTH_CLIENT_AGENT_MAPPING` env (JSON object: `{"client_id":"agent_id"}`).
+ * Returns null when no mapping exists — the OAuth flow still works, but the
+ * issued token won't carry an `agent_id` claim and the consent screen won't
+ * show the agent name/platform badge.
+ */
+export function getAgentForOauthClient(clientId: string): string | null {
+	const raw = process.env.OAUTH_CLIENT_AGENT_MAPPING;
+	if (!raw) return null;
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+		const value = (parsed as Record<string, unknown>)[clientId];
+		return typeof value === "string" ? value : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Verify a client secret against the stored hash.
  * Uses timing-safe comparison to prevent timing attacks.
  */

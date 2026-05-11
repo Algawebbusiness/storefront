@@ -120,16 +120,34 @@ export default async function AuthorizePage({
 	const scopes = parseScopes(scope!);
 	const clientName = client!.name;
 
+	// Phase B7: when this OAuth client is mapped to a registered agent in the
+	// agent registry, surface the agent's display name + platform badge so the
+	// user knows *which platform* is asking, not just an opaque client_id.
+	const { getAgentForOauthClient } = await import("@/lib/oauth/config");
+	const { getAgentById } = await import("@/lib/protocols/shared/agent-registry");
+	const mappedAgentId = getAgentForOauthClient(clientId!);
+	const agent = mappedAgentId ? await getAgentById(mappedAgentId) : null;
+	const displayedName = agent?.display_name ?? clientName;
+
 	return (
 		<div className="mx-auto mt-16 w-full max-w-md">
 			<div className="rounded-lg border border-border bg-card p-8 shadow-sm">
 				{/* Header */}
 				<div className="mb-6 text-center">
 					<p className="mb-2 text-sm text-muted-foreground">{brandConfig.siteName}</p>
-					<h1 className="text-xl font-semibold">{t("authorize", { client: clientName })}</h1>
+					<h1 className="text-xl font-semibold">{t("authorize", { client: displayedName })}</h1>
 					<p className="mt-2 text-sm text-muted-foreground">
-						{t("wantsAccess", { client: clientName })}
+						{t("wantsAccess", { client: displayedName })}
 					</p>
+					{agent ? (
+						<div className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/40 px-3 py-1 text-xs font-medium">
+							<span aria-hidden="true">✓</span>
+							<span>
+								{lang === "cs" ? "Ověřený agent" : "Verified agent"} ·{" "}
+								{agent.platform.charAt(0).toUpperCase() + agent.platform.slice(1)}
+							</span>
+						</div>
+					) : null}
 				</div>
 
 				{/* Scope list */}

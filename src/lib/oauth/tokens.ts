@@ -36,6 +36,13 @@ export interface JwtPayload {
 	email: string;
 	scope: string;
 	client_id: string;
+	/**
+	 * Phase B7: registered agent identity (from agent registry) when the
+	 * OAuth client is mapped via OAUTH_CLIENT_AGENT_MAPPING. Lets the
+	 * resource server (UCP/ACP/MCP) attribute customer-scoped calls to
+	 * the agent platform behind them.
+	 */
+	agent_id?: string;
 	type: "access" | "refresh";
 	jti: string; // unique token ID (for refresh token rotation)
 	saleor_token?: string; // Saleor access token (only in server memory, not exposed)
@@ -104,12 +111,15 @@ export function createTokenPair(params: {
 	clientId: string;
 	saleorToken: string;
 	saleorRefreshToken: string;
+	/** Phase B7: optional agent identity bound to this OAuth client. */
+	agentId?: string;
 }): { access_token: string; refresh_token: string; expires_in: number } {
 	const basePayload = {
 		sub: params.userId,
 		email: params.email,
 		scope: params.scope,
 		client_id: params.clientId,
+		...(params.agentId ? { agent_id: params.agentId } : {}),
 	};
 
 	const access_token = signJwt(
