@@ -11,6 +11,9 @@
 
 import { listActiveAgents } from "../shared/agent-registry";
 import type { AgentIdentity } from "../shared/agent-registry-types";
+// Side-effect import: each payment handler self-registers with the registry.
+import "../handlers";
+import { buildPaymentHandlersForProfile } from "../shared/payment-handlers";
 import { getPublicKeyBase64, getSigningKey } from "../shared/signing";
 import {
 	ALL_BUSINESS_CAPABILITIES,
@@ -22,19 +25,13 @@ import {
 import type {
 	AcceptedPlatform,
 	UcpCapability,
-	UcpPaymentInstrument,
 	UcpProfile,
 	UcpSigningKey,
 } from "./types";
 
-/** Default set of payment instruments when no env override is provided. */
-const DEFAULT_STRIPE_INSTRUMENTS: UcpPaymentInstrument[] = ["card"];
-
 /** Build the UCP business profile from environment configuration. */
 export async function buildUcpProfile(): Promise<UcpProfile> {
 	const baseUrl = process.env.NEXT_PUBLIC_STOREFRONT_URL || "http://localhost:3000";
-	const stripeKey = process.env.STRIPE_PUBLISHABLE_KEY;
-	const stripeInstruments = parseStripeInstruments();
 	const [signingKeys, acceptedPlatforms] = await Promise.all([
 		collectSigningKeys(),
 		collectAcceptedPlatforms(),
@@ -67,20 +64,7 @@ export async function buildUcpProfile(): Promise<UcpProfile> {
 				ALL_BUSINESS_CAPABILITIES.map((cap) => [cap.id, [toUcpCapability(cap)]]),
 			),
 
-			payment_handlers: stripeKey
-				? {
-						"com.stripe.shared_payment_token": [
-							{
-								id: "stripe_spt",
-								version: UCP_VERSION,
-								config: {
-									publishable_key: stripeKey,
-									available_payment_instruments: stripeInstruments,
-								},
-							},
-						],
-					}
-				: {},
+			payment_handlers: buildPaymentHandlersForProfile(),
 		},
 
 		signing_keys: signingKeys,
@@ -154,22 +138,3 @@ const PLATFORM_DISPLAY: Record<AcceptedPlatform["platform"], string> = {
 	anthropic: "Anthropic (Claude)",
 	microsoft: "Microsoft (Copilot)",
 };
-
-/**
- * Parse `STRIPE_AVAILABLE_INSTRUMENTS` env var (comma-separated) into the typed
- * payment instrument list. Empty/missing → default `["card"]`. Whitespace and
- * empty entries are dropped; values are not validated against the closed enum
- * subset (the type is open by design — agents may need region-specific names).
- *
- * Phase A6 ships static config; A.E1 (control panel) may swap this for a
- * dynamic Stripe `paymentMethods.list` lookup.
- */
-function parseStripeInstruments(): UcpPaymentInstrument[] {
-	const raw = process.env.STRIPE_AVAILABLE_INSTRUMENTS;
-	if (!raw) return DEFAULT_STRIPE_INSTRUMENTS;
-	const parsed = raw
-		.split(",")
-		.map((s) => s.trim())
-		.filter((s) => s.length > 0);
-	return parsed.length > 0 ? (parsed as UcpPaymentInstrument[]) : DEFAULT_STRIPE_INSTRUMENTS;
-}
