@@ -2,9 +2,9 @@
  * Maps Saleor order state to protocol format (used by both ACP and UCP).
  */
 
-import type { ProtocolAddress, ProtocolLineItem, ProtocolMoney, ProtocolTotals } from "./types";
+import type { ProtocolAddress, ProtocolLineItem, ProtocolMoney, UcpTotals } from "./types";
 import type { SaleorOrder, SaleorOrderAddress } from "./order-queries";
-import { toMinorUnits } from "./money";
+import { normalizeCurrency, toMinorUnits } from "./money";
 
 const STOREFRONT_URL = process.env.NEXT_PUBLIC_STOREFRONT_URL || "http://localhost:3000";
 
@@ -17,7 +17,7 @@ export type ProtocolOrderStatus =
 	| "cancelled"
 	| "refunded";
 
-/** Full protocol order representation */
+/** Full protocol order representation (UCP 2026-04-08 totals contract) */
 export interface ProtocolOrder {
 	id: string;
 	number: string;
@@ -25,9 +25,11 @@ export interface ProtocolOrder {
 	status_display: string;
 	created_at: string;
 	email: string | null;
+	/** ISO 4217 currency at order top-level (UCP 2026-04-08 mandatory). */
+	currency: string;
 	is_paid: boolean;
 	line_items: ProtocolLineItem[];
-	totals: ProtocolTotals;
+	totals: UcpTotals;
 	shipping_address: ProtocolAddress | null;
 	billing_address: ProtocolAddress | null;
 	shipping_method: { name: string; price: ProtocolMoney } | null;
@@ -94,12 +96,13 @@ export function mapOrderToProtocol(order: SaleorOrder): ProtocolOrder {
 		0,
 	);
 
-	const totals: ProtocolTotals = {
-		subtotal: toMinorUnits(order.subtotal.gross),
-		tax: toMinorUnits(order.total.tax),
-		shipping: toMinorUnits(order.shippingPrice.gross),
-		discount: toMinorUnits({ amount: totalDiscountAmount, currency }),
-		total: toMinorUnits(order.total.gross),
+	const totals: UcpTotals = {
+		currency: normalizeCurrency(currency),
+		subtotal_cents: toMinorUnits(order.subtotal.gross).amount,
+		tax_cents: toMinorUnits(order.total.tax).amount,
+		shipping_cents: toMinorUnits(order.shippingPrice.gross).amount,
+		discount_cents: toMinorUnits({ amount: totalDiscountAmount, currency }).amount,
+		total_cents: toMinorUnits(order.total.gross).amount,
 	};
 
 	return {
@@ -109,6 +112,7 @@ export function mapOrderToProtocol(order: SaleorOrder): ProtocolOrder {
 		status_display: order.statusDisplay,
 		created_at: order.created,
 		email: order.userEmail,
+		currency: normalizeCurrency(currency),
 		is_paid: order.isPaid,
 		line_items: lineItems,
 		totals,

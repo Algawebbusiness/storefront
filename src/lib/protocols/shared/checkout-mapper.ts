@@ -6,11 +6,11 @@ import type {
 	CheckoutStatus,
 	ProtocolLineItem,
 	ProtocolMoney,
-	ProtocolTotals,
 	UcpContext,
+	UcpTotals,
 } from "./types";
 import type { SaleorCheckout, SaleorCheckoutAddress, SaleorShippingMethod } from "./checkout-queries";
-import { toMinorUnits } from "./money";
+import { normalizeCurrency, toMinorUnits } from "./money";
 import { saleorToProtocol } from "./address";
 import { extractContextFromMetadata } from "./context-mapper";
 import type { ProtocolAddress, SaleorAddress } from "./types";
@@ -26,13 +26,15 @@ export interface ProtocolShippingMethod {
 	estimated_days_max?: number;
 }
 
-/** Full protocol checkout representation */
+/** Full protocol checkout representation (UCP 2026-04-08 totals contract) */
 export interface ProtocolCheckout {
 	id: string;
 	status: CheckoutStatus;
 	email: string | null;
+	/** ISO 4217 currency at checkout top-level (UCP 2026-04-08 mandatory). */
+	currency: string;
 	line_items: ProtocolLineItem[];
-	totals: ProtocolTotals;
+	totals: UcpTotals;
 	shipping_address: ProtocolAddress | null;
 	billing_address: ProtocolAddress | null;
 	delivery_method: { id: string; name: string } | null;
@@ -118,20 +120,20 @@ export function mapCheckoutToProtocol(checkout: SaleorCheckout): ProtocolCheckou
 		};
 	});
 
-	const totals: ProtocolTotals = {
-		subtotal: toMinorUnits(checkout.subtotalPrice.gross),
-		tax: toMinorUnits(checkout.totalPrice.tax),
-		shipping: toMinorUnits(checkout.shippingPrice.gross),
-		discount: checkout.discount
-			? toMinorUnits(checkout.discount)
-			: { amount: 0, currency },
-		total: toMinorUnits(checkout.totalPrice.gross),
+	const totals: UcpTotals = {
+		currency: normalizeCurrency(currency),
+		subtotal_cents: toMinorUnits(checkout.subtotalPrice.gross).amount,
+		tax_cents: toMinorUnits(checkout.totalPrice.tax).amount,
+		shipping_cents: toMinorUnits(checkout.shippingPrice.gross).amount,
+		discount_cents: checkout.discount ? toMinorUnits(checkout.discount).amount : 0,
+		total_cents: toMinorUnits(checkout.totalPrice.gross).amount,
 	};
 
 	const result: ProtocolCheckout = {
 		id: checkout.id,
 		status: mapCheckoutStatus(checkout),
 		email: checkout.email,
+		currency: normalizeCurrency(currency),
 		line_items: lineItems,
 		totals,
 		shipping_address: checkout.shippingAddress

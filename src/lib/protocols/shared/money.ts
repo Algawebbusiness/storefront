@@ -31,13 +31,22 @@ export function getCurrencyDecimals(currency: string): number {
 	return 2;
 }
 
+/**
+ * Normalize a currency code to canonical ISO 4217 form (uppercase).
+ * Saleor returns uppercase, but defensive normalization keeps downstream
+ * comparisons (`Set.has(...)`, equality checks) safe.
+ */
+export function normalizeCurrency(currency: string): string {
+	return currency.toUpperCase();
+}
+
 /** Convert Saleor decimal amount to protocol minor units */
 export function toMinorUnits(saleorMoney: SaleorMoney): ProtocolMoney {
 	const decimals = getCurrencyDecimals(saleorMoney.currency);
 	const factor = Math.pow(10, decimals);
 	return {
 		amount: Math.round(saleorMoney.amount * factor),
-		currency: saleorMoney.currency,
+		currency: normalizeCurrency(saleorMoney.currency),
 	};
 }
 

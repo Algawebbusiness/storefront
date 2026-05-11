@@ -59,13 +59,41 @@ export interface ProtocolLineItem {
 	image_url?: string;
 }
 
-/** Checkout totals in protocol format */
+/**
+ * Legacy nested totals shape used by ACP (`2026-01-30` spec) and a few internal
+ * call sites. New code should prefer `UcpTotals` (Phase A8).
+ */
 export interface ProtocolTotals {
 	subtotal: ProtocolMoney;
 	tax: ProtocolMoney;
 	shipping: ProtocolMoney;
 	discount: ProtocolMoney;
 	total: ProtocolMoney;
+}
+
+/**
+ * UCP 2026-04-08 totals contract (Phase A8).
+ *
+ * Flat integer-cents structure with mandatory ISO 4217 currency at the top.
+ * Supersedes the nested `ProtocolTotals` shape on UCP order/checkout responses.
+ *
+ * `breakdown[]` carries optional per-line tax/discount detail when the
+ * merchant has the data; agents must tolerate it being absent.
+ */
+export interface UcpTotals {
+	currency: string;
+	subtotal_cents: number;
+	discount_cents: number;
+	shipping_cents: number;
+	tax_cents: number;
+	total_cents: number;
+	breakdown?: UcpTotalsBreakdown[];
+}
+
+export interface UcpTotalsBreakdown {
+	line_id: string;
+	tax_cents?: number;
+	discount_cents?: number;
 }
 
 /**
