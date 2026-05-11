@@ -78,6 +78,19 @@ export const SHOPPING_CATALOG: CapabilityDef = {
 	schema: "schemas/shopping/catalog.json",
 };
 
+/**
+ * Returns capability — OAuth-scoped agent can initiate an order return / refund
+ * on behalf of a customer. Added in Phase C1. The accompanying REST endpoint
+ * lives at `POST /api/ucp/rest/orders/:id/return` and requires the `order.return`
+ * agent scope plus a customer-bound OAuth token.
+ */
+export const SHOPPING_RETURNS: CapabilityDef = {
+	id: "dev.ucp.shopping.returns",
+	spec: "returns",
+	schema: "schemas/shopping/returns.json",
+	extends: SHOPPING_CHECKOUT.id,
+};
+
 /** All capabilities advertised in /.well-known/ucp. */
 export const ALL_BUSINESS_CAPABILITIES: readonly CapabilityDef[] = [
 	SHOPPING_CHECKOUT,
@@ -85,6 +98,7 @@ export const ALL_BUSINESS_CAPABILITIES: readonly CapabilityDef[] = [
 	SHOPPING_DISCOUNT,
 	SHOPPING_CART,
 	SHOPPING_CATALOG,
+	SHOPPING_RETURNS,
 ];
 
 /** Map of capability ID → versions, derived from ALL_BUSINESS_CAPABILITIES. */
