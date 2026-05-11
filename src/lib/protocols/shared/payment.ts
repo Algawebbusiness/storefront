@@ -22,16 +22,31 @@ export interface PaymentResult {
 }
 
 /**
- * Process a Stripe shared payment token for a checkout.
- *
- * This calls transactionInitialize to set up the payment, then
- * transactionProcess to finalize it with the Stripe token data.
+ * Which Stripe payment-method wire format the agent is using. C6/C7 ship two:
+ *   - `spt`         — Stripe Shared Payment Token (default, A6 baseline).
+ *   - `link_wallet` — Stripe Link Agent Wallet (C7). The gateway data carries
+ *                     `linkWalletToken` instead of `paymentToken`. Final
+ *                     Stripe 2026 schema may rename this; the handler module
+ *                     is the single source of truth and we'll realign once
+ *                     the public spec lands.
+ */
+export type StripePaymentMethod = "spt" | "link_wallet";
+
+/**
+ * Process a Stripe payment token for a checkout. Dispatches Saleor's
+ * `transactionInitialize` with the gateway-data shape appropriate for the
+ * declared method (SPT or Link wallet), then walks transactionProcess if
+ * the gateway needs another round-trip.
  */
 export async function processStripePayment(
 	checkoutId: string,
 	token: string,
+	method: StripePaymentMethod = "spt",
 ): Promise<PaymentResult> {
 	const stripeGatewayId = process.env.STRIPE_GATEWAY_ID || "app.saleor.stripe";
+	const gatewayData = method === "link_wallet"
+		? { linkWalletToken: token, paymentMethodType: "link_wallet" }
+		: { paymentToken: token };
 
 	// Step 1: Initialize the transaction
 	const initResult = await saleorQuery<TransactionInitializeData>(
@@ -40,7 +55,7 @@ export async function processStripePayment(
 			checkoutId,
 			paymentGateway: {
 				id: stripeGatewayId,
-				data: { paymentToken: token },
+				data: gatewayData,
 			},
 		},
 	);

@@ -27,7 +27,7 @@ import {
 	type CheckoutByIdData,
 	type CheckoutCompleteData,
 } from "@/lib/protocols/shared/checkout-queries";
-import { processStripePayment } from "@/lib/protocols/shared/payment";
+import { processStripePayment, type StripePaymentMethod } from "@/lib/protocols/shared/payment";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
 import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
@@ -42,6 +42,22 @@ interface CompleteCheckoutBody {
 
 interface CheckoutParams {
 	id: string;
+}
+
+/**
+ * Map the agent-facing `payment.type` string to the internal Stripe
+ * payment method. Returns `null` for unsupported types so the route can
+ * reject early with a 400.
+ */
+function paymentMethodFromType(type: string): StripePaymentMethod | null {
+	switch (type) {
+		case "com.stripe.shared_payment_token":
+			return "spt";
+		case "com.stripe.link_agent_wallet":
+			return "link_wallet";
+		default:
+			return null;
+	}
 }
 
 async function fetchCheckoutTotalCents(id: string): Promise<number | null> {
@@ -75,7 +91,8 @@ export const POST = withUcpRoute<CheckoutParams>(
 			);
 		}
 
-		if (body.payment.type !== "com.stripe.shared_payment_token") {
+		const paymentMethod = paymentMethodFromType(body.payment.type);
+		if (!paymentMethod) {
 			return signedJsonResponse(
 				{ error: { code: "bad_request", message: `Unsupported payment type: ${body.payment.type}` } },
 				{ status: 400 },
@@ -120,7 +137,7 @@ export const POST = withUcpRoute<CheckoutParams>(
 		}
 
 		// Process payment
-		const paymentResult = await processStripePayment(id, body.payment.token);
+		const paymentResult = await processStripePayment(id, body.payment.token, paymentMethod);
 		if (!paymentResult.ok) {
 			return signedJsonResponse(
 				{ error: { code: "payment_failed", message: paymentResult.error ?? "Payment processing failed" } },

@@ -83,8 +83,7 @@ describe("payment-handlers registry", () => {
 	});
 
 	it("reads env at build() time so per-deploy configuration is respected", async () => {
-		const { default: _ } = await import("@/lib/protocols/handlers/stripe-spt");
-		void _;
+		await import("@/lib/protocols/handlers/stripe-spt");
 
 		// Without STRIPE_PUBLISHABLE_KEY → no entry
 		vi.stubEnv("STRIPE_PUBLISHABLE_KEY", "");

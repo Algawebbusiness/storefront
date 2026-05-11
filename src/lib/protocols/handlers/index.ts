@@ -7,3 +7,4 @@
  */
 
 import "./stripe-spt";
+import "./stripe-link-wallet";
