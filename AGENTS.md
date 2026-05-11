@@ -126,13 +126,22 @@ NEXT_PUBLIC_DEFAULT_CHANNEL=       # Your Saleor channel slug (e.g., "default-ch
 
 # Note: Product pages are NOT pre-rendered (all on-demand via ISR) due to Cache Components limitations
 
-# Agentic Commerce Protocols (optional)
+# Agentic Commerce Protocols (optional) — UCP 2026-04-08 since Phase A2
 ACP_ENABLED=false                    # Enable ACP endpoints (OpenAI/ChatGPT)
 # ACP_API_KEY=                       # API key for ACP requests
 UCP_ENABLED=false                    # Enable UCP endpoints (Google/Gemini)
+# UCP_VERSION=2026-04-08             # UCP spec version (default 2026-04-08)
 # STRIPE_PUBLISHABLE_KEY=            # For UCP payment handler
+# STRIPE_AVAILABLE_INSTRUMENTS=card,apple_pay,...   # available_payment_instruments (default ["card"]; A6)
 # AGENT_API_KEYS=                    # Comma-separated API keys for agent access
 # SALEOR_WEBHOOK_SECRET=             # HMAC secret for Saleor webhook verification
+
+# UCP/ACP response signing (ed25519) — Phases A1+A3
+# Generate values:  node scripts/generate-signing-keys.mjs
+# Required in production; ephemeral keypair (with warning) in dev.
+# UCP_SIGNING_PRIVATE_KEY=           # 32B private seed, base64
+# UCP_SIGNING_PUBLIC_KEY=            # 32B public key, base64
+# UCP_SIGNING_KEY_ID=                # Opaque kid published in /.well-known/ucp
 
 # Payload CMS (content layer — blog, pages, product enrichment)
 # PAYLOAD_API_URL=                    # Payload REST API (e.g., https://cms.example.com/api)

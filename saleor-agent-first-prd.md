@@ -1616,3 +1616,134 @@ SOCIAL_INSTAGRAM=https://instagram.com/...
 ---
 
 > **Poznámka pro implementujícího agenta:** Tento dokument je kompletní zadání. Implementuj sekce v pořadí: nejprve Část A (klasické SEO), pak Část B (JSON-LD), pak C (llms.txt), a nakonec D+E (MCP server). Každou část testuj podle Části G před pokračováním na další.
+
+---
+
+## 10. Změny v UCP 2026-04-08 (květen 2026) {#10-ucp-2026-04-08}
+
+> Tato sekce je **deltová**. PRD výše popisuje agent-first vrstvu vůči UCP `2026-01-23` baseline. Algaweb šablona je teď posunutá na **UCP `2026-04-08`** přes 5-fázový plán v [`agentic-commerce-2026-plan.md`](./agentic-commerce-2026-plan.md). Tato sekce shrnuje, co se z fáze A (kroky A1–A9, dokončeno květen 2026) změnilo proti původnímu PRD.
+>
+> Detail jednotlivých kroků, acceptance criteria a commit hashe viz `agentic-commerce-2026-plan.md` sekce *Stav implementace*.
+
+### 10.1 Spec verze
+
+Profil v `/.well-known/ucp` teď deklaruje `version: "2026-04-08"`. Schema URL pointují na `https://ucp.dev/2026-04-08/...`. Override přes `UCP_VERSION` env stále funguje.
+
+### 10.2 Podpis odpovědí — ed25519
+
+Každá `/api/ucp/rest/*` a `/api/acp/checkout` odpověď nese header `UCP-Signature: keyid="...",alg="ed25519",sig="<base64>"` (RFC 9421-inspired). Veřejný klíč je vystavený v profilu pod `signing_keys[]`. Klíče se generují přes `node scripts/generate-signing-keys.mjs` a injektují do prostředí jako `UCP_SIGNING_PRIVATE_KEY` / `UCP_SIGNING_PUBLIC_KEY` / `UCP_SIGNING_KEY_ID`. V dev modu bez env vars se generuje ephemeral keypair (s warning); v production missing env throws.
+
+`/.well-known/ucp` se **nepodepisuje** záměrně — je to bootstrap-of-trust, agent ho fetchuje přes HTTPS a teprve odtud získá veřejný klíč pro verifikaci ostatních responses.
+
+### 10.3 Nové kapability
+
+Profil teď deklaruje 5 kapabilit místo původních 3:
+
+| Capability | ID | Účel |
+|------------|-----|------|
+| Checkout (původní) | `dev.ucp.shopping.checkout` | Existující checkout flow |
+| Fulfillment (původní) | `dev.ucp.shopping.fulfillment` | Shipping methods, address |
+| Discount (původní) | `dev.ucp.shopping.discount` | Promo codes, vouchers |
+| **Cart (A4)** | `dev.ucp.shopping.cart` | Agent-built košík před `complete` |
+| **Catalog (A5)** | `dev.ucp.shopping.catalog` | REST product search/detail/categories |
+
+Capability definice jsou v `src/lib/protocols/ucp/capabilities.ts` jako enumerated `CapabilityDef` objekty — přidání nové kapability = přidání řádku do `ALL_BUSINESS_CAPABILITIES`.
+
+### 10.4 Cart endpoints (A4)
+
+```
+POST   /api/ucp/rest/carts                           create cart
+GET    /api/ucp/rest/carts/:id                       read cart
+PATCH  /api/ucp/rest/carts/:id                       update agent context
+DELETE /api/ucp/rest/carts/:id                       cancel cart (status="cancelled")
+POST   /api/ucp/rest/carts/:id/lines                 add line
+PATCH  /api/ucp/rest/carts/:id/lines/:lineId         update qty
+DELETE /api/ucp/rest/carts/:id/lines/:lineId         remove line
+```
+
+UCP cart shape má **mandatory `currency` na top-level** + `sku` per line + `status: "active" | "cancelled"`. Saleor backend = `Checkout` v pre-complete state, jiná protokolová tvář než checkout-session.
+
+### 10.5 Catalog endpoints (A5)
+
+```
+GET /api/ucp/rest/catalog/search?q=&category=&min_price=&max_price=&cursor=&limit=
+GET /api/ucp/rest/catalog/products/:slug
+GET /api/ucp/rest/catalog/categories
+```
+
+UCP catalog item nese **strukturované `attributes`** (slug → joined value names — agent nemusí parsovat description), `availability: "in_stock" | "out_of_stock" | "preorder"` a `price: { amount_cents, currency }`. Cached 5 min přes `export const revalidate = 300`. **MCP `search_products` tool ponechán** — REST + MCP transports koexistují v profilu.
+
+**Pagination deviation:** plán uváděl `?page=`, ale Saleor podporuje jen cursor-based pagination. Implementace používá `?cursor=` a vrací `{next_cursor, has_next_page}`.
+
+### 10.6 Payment instruments (A6)
+
+`UcpPaymentHandler.config` má teď strukturovaný shape s mandatory `available_payment_instruments: UcpPaymentInstrument[]` (open enum: `card`, `apple_pay`, `klarna`, `stablecoin.usdc`, … + `string & {}` trick pro region-specific instruments). Stripe handler v profilu se naplní z `STRIPE_AVAILABLE_INSTRUMENTS` env (default `["card"]`).
+
+### 10.7 Agent context — intent + buyer_preferences (A7)
+
+Agenti můžou v request body posílat:
+
+```json
+{
+  "context": {
+    "intent": "Ethiopian honey-process for v60",
+    "buyer_preferences": { "max_age_days": 14 },
+    "session_id": "agent-session-123"
+  }
+}
+```
+
+Validace (limity 500 znaků pro `intent`, 2000 pro stringified `buyer_preferences`) → uložení do Saleor metadata jako klíče `intent`, `buyer_preferences`, `agent_session_id` (bez prefix). Cart/checkout/order responses echo context zpět.
+
+**Webhook propagace:** při `ORDER_CREATED` webhook handler best-effort kopíruje context z source checkout do order metadata. Vyžaduje `SALEOR_APP_TOKEN` s `MANAGE_ORDERS` permission; bez něj log + skip, idempotent (skip pokud order už context má).
+
+**Intent NENÍ použit pro automatickou filtraci produktů** — je to channel pro agent → merchant signal, viditelný v Saleor Dashboard checkout/order metadata.
+
+### 10.8 Totals contract (A8)
+
+`UcpTotals` shape (UCP 2026-04-08):
+
+```ts
+{
+  currency: string;          // ISO 4217, mandatory na top-level
+  subtotal_cents: number;
+  discount_cents: number;
+  shipping_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  breakdown?: UcpTotalsBreakdown[];   // optional per-line detail
+}
+```
+
+`ProtocolOrder` a `ProtocolCheckout` mají teď `currency` na **order top-level** (ne jen v totals). `normalizeCurrency()` v `money.ts` defensive uppercase. ACP (`AcpCheckoutSession.totals`) si zachovává původní `ProtocolTotals` (jiná spec, jiná version cadence).
+
+### 10.9 MCP endpoint URL fix (A9)
+
+Profil dříve deklaroval `${baseUrl}/api/ucp/mcp` jako MCP transport endpoint, ale skutečný route žije na `${baseUrl}/mcp`. Opraveno v profile-builder.
+
+### 10.10 Test coverage (A1–A9)
+
+| Modul | Testů |
+|-------|------:|
+| `signing.ts` (ed25519) | 11 |
+| `response.ts` (signed wrappers) | 9 |
+| `profile-builder.ts` | 10 |
+| `cart-mapper.ts` | 8 |
+| `catalog-mapper.ts` | 14 |
+| `context-mapper.ts` | 23 |
+| `order-mapper.ts` | 7 |
+| `money.ts` (rozšířeno o JPY/KWD) | 13 |
+| `address.ts` | 5 |
+| **Celkem protocols** | **100+** |
+
+Plus 60+ testů v OAuth/UI dohromady = **210/210 pass**.
+
+### 10.11 Co se NEZMĚNILO oproti PRD
+
+- JSON-LD strukturovaná data (Část B) — beze změny
+- llms.txt manifest (Část C) — beze změny
+- Veřejná MCP vrstva (Část D) — `search_products` a další tools beze změny
+- Authenticated MCP vrstva (Část E) — beze změny
+- OAuth2 Authorization Server (Část F) — beze změny
+
+Fáze B–E plánu se zaměřují na agent identity, post-order, český moat a produktizaci — ty jsou mimo rozsah tohoto deltového PRD.

@@ -1,5 +1,11 @@
 # CLAUDE.md — Algaweb E-commerce Platform
 
+> **Active implementation plan:** [`agentic-commerce-2026-plan.md`](./agentic-commerce-2026-plan.md) — 5-phase upgrade na **UCP `2026-04-08`** + Stripe Sessions 2026 (50 kroků). **Foundation A1–A10 dokončena (květen 2026)**, fáze B–E čekají. Před implementační prací načti relevantní krok z toho dokumentu.
+>
+> **Původní PRD:** [`saleor-agent-first-prd.md`](./saleor-agent-first-prd.md) — UCP `2026-01-23` baseline + sekce 10 (deltový update na 2026-04-08).
+>
+> **Workspace:** `~/code/storefront/` (mimo Nextcloud, kvůli sync race s `.git/`). Viz `~/Nextcloud/vibecode-migration/STATUS.md`.
+
 ## Kdo jsem a co děláme
 
 Jsem Jirka, provozuji **Algaweb** — českou webovou agenturu a managed hosting providera. Stavím e-shopy pro klienty na **Saleor** (headless e-commerce backend) s **Next.js** frontendem. Kóduji primárně přes AI (vibecoding). Komunikuji česky, ale technické dokumenty a kód píšu anglicky.
@@ -823,7 +829,7 @@ src/lib/protocols/
 ACP_ENABLED=false                    # Zapnout ACP endpointy
 ACP_API_KEY=                         # API klíč pro OpenAI
 UCP_ENABLED=false                    # Zapnout UCP endpointy
-UCP_VERSION=2026-01-23               # Verze UCP spec
+UCP_VERSION=2026-04-08               # Verze UCP spec (plán fáze A bumpl z 2026-01-23)
 STRIPE_PUBLISHABLE_KEY=              # Pro UCP payment handler
 AGENT_API_KEYS=                      # Čárkou oddělené API klíče pro agenty
 SALEOR_WEBHOOK_SECRET=               # HMAC secret pro verifikaci Saleor webhooků
