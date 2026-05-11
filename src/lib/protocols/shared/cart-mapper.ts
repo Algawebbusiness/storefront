@@ -12,6 +12,11 @@
  */
 
 import { extractContextFromMetadata } from "./context-mapper";
+import {
+	checkEligibility,
+	type EligibilityClaim,
+	type EligibilityRequirement,
+} from "./eligibility";
 import { toMinorUnits } from "./money";
 import type { SaleorCheckout } from "./checkout-queries";
 import type { ProtocolMoney, UcpContext } from "./types";
@@ -64,12 +69,18 @@ export interface UcpCart {
 	warnings?: UcpCartWarning[];
 	/** Agent-supplied context echoed back from Saleor metadata (Phase A7). */
 	context?: UcpContext;
+	/**
+	 * Eligibility requirements that the buyer must clear before this cart
+	 * can be paid. Surfaced only when at least one requirement is unmet
+	 * (Phase C4). Empty arrays are omitted to keep the response lean.
+	 */
+	eligibility_requirements?: EligibilityRequirement[];
 }
 
 /** Map a Saleor Checkout into the UCP cart shape. */
 export function mapCheckoutToCart(
 	checkout: SaleorCheckout,
-	options: { status?: UcpCartStatus } = {},
+	options: { status?: UcpCartStatus; claims?: EligibilityClaim[] } = {},
 ): UcpCart {
 	const currency = checkout.totalPrice.gross.currency;
 
@@ -113,6 +124,11 @@ export function mapCheckoutToCart(
 	const context = extractContextFromMetadata(checkout.metadata);
 	if (context) {
 		cart.context = context;
+	}
+
+	const eligibility = checkEligibility(cart, options.claims ?? []);
+	if (eligibility.missing_requirements.length > 0) {
+		cart.eligibility_requirements = eligibility.missing_requirements;
 	}
 
 	return cart;
