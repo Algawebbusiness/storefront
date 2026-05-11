@@ -92,6 +92,26 @@ export type UcpPaymentInstrument =
 export interface UcpPaymentHandlerConfig {
 	publishable_key?: string;
 	available_payment_instruments: UcpPaymentInstrument[];
+	/**
+	 * Wallet provider identifier (e.g. `stripe.link`). Optional; declared by
+	 * wallet-style handlers so agents can route credentials to the right
+	 * processor without hard-coding the handler id.
+	 */
+	wallet_provider?: string;
+	/**
+	 * Stablecoin chains supported when `available_payment_instruments`
+	 * carries `stablecoin.*` entries (Phase C8). Free-form lowercase chain
+	 * identifiers ("ethereum", "solana", "base").
+	 */
+	supported_chains?: string[];
+	/**
+	 * Indicates which Machine Payments Protocol revisions the handler
+	 * speaks (Phase C9). Empty / undefined when not an MPP handler.
+	 */
+	protocols?: string[];
+	supports_streaming?: boolean;
+	supports_recurring?: boolean;
+	supports_micropayments?: boolean;
 }
 
 export interface UcpPaymentHandler {
