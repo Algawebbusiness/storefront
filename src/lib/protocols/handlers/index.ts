@@ -9,3 +9,4 @@
 import "./stripe-spt";
 import "./stripe-link-wallet";
 import "./stripe-stablecoin";
+import "./stripe-mpp";
