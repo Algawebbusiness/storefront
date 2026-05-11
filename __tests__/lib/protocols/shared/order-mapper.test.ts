@@ -11,6 +11,7 @@ function makeOrder(overrides: Partial<SaleorOrder> = {}): SaleorOrder {
 		created: "2026-05-11T10:00:00Z",
 		userEmail: "buyer@example.com",
 		isPaid: true,
+		channel: { slug: "default-channel" },
 		lines: [],
 		total: {
 			gross: { amount: 599, currency: "CZK" },

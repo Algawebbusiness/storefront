@@ -46,7 +46,7 @@ export async function buildUcpProfile(): Promise<UcpProfile> {
 						version: UCP_VERSION,
 						spec: `${UCP_SPEC_BASE}/overview`,
 						transport: "mcp",
-						endpoint: `${baseUrl}/api/ucp/mcp`,
+						endpoint: `${baseUrl}/mcp`,
 						schema: `${UCP_SCHEMA_BASE}/services/shopping/openrpc.json`,
 					},
 				],

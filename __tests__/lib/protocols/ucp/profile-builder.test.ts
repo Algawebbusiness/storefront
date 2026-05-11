@@ -24,6 +24,12 @@ describe("buildUcpProfile (UCP 2026-04-08)", () => {
 		expect(restService?.schema).toMatch(/^https:\/\/ucp\.dev\/2026-04-08\//);
 		expect(restService?.spec).toMatch(/^https:\/\/ucp\.dev\/2026-04-08\/specification\//);
 
+		// A9: MCP transport endpoint must point at the real route at /mcp,
+		// not the misnamed /api/ucp/mcp the profile-builder used to advertise.
+		const mcpService = profile.ucp.services["dev.ucp.shopping"]?.find((s) => s.transport === "mcp");
+		expect(mcpService?.endpoint).toMatch(/\/mcp$/);
+		expect(mcpService?.endpoint).not.toMatch(/\/api\/ucp\/mcp$/);
+
 		const checkout = profile.ucp.capabilities["dev.ucp.shopping.checkout"]?.[0];
 		expect(checkout?.schema).toBe("https://ucp.dev/2026-04-08/schemas/shopping/checkout.json");
 		expect(checkout?.spec).toBe("https://ucp.dev/2026-04-08/specification/checkout");
