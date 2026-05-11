@@ -17,12 +17,16 @@ import {
 	UCP_VERSION,
 	type CapabilityDef,
 } from "./capabilities";
-import type { UcpCapability, UcpProfile, UcpSigningKey } from "./types";
+import type { UcpCapability, UcpPaymentInstrument, UcpProfile, UcpSigningKey } from "./types";
+
+/** Default set of payment instruments when no env override is provided. */
+const DEFAULT_STRIPE_INSTRUMENTS: UcpPaymentInstrument[] = ["card"];
 
 /** Build the UCP business profile from environment configuration. */
 export async function buildUcpProfile(): Promise<UcpProfile> {
 	const baseUrl = process.env.NEXT_PUBLIC_STOREFRONT_URL || "http://localhost:3000";
 	const stripeKey = process.env.STRIPE_PUBLISHABLE_KEY;
+	const stripeInstruments = parseStripeInstruments();
 	const signingKeys = await collectSigningKeys();
 
 	return {
@@ -60,6 +64,7 @@ export async function buildUcpProfile(): Promise<UcpProfile> {
 								version: UCP_VERSION,
 								config: {
 									publishable_key: stripeKey,
+									available_payment_instruments: stripeInstruments,
 								},
 							},
 						],
@@ -89,4 +94,23 @@ async function collectSigningKeys(): Promise<UcpSigningKey[]> {
 			public_key: publicKey,
 		},
 	];
+}
+
+/**
+ * Parse `STRIPE_AVAILABLE_INSTRUMENTS` env var (comma-separated) into the typed
+ * payment instrument list. Empty/missing → default `["card"]`. Whitespace and
+ * empty entries are dropped; values are not validated against the closed enum
+ * subset (the type is open by design — agents may need region-specific names).
+ *
+ * Phase A6 ships static config; A.E1 (control panel) may swap this for a
+ * dynamic Stripe `paymentMethods.list` lookup.
+ */
+function parseStripeInstruments(): UcpPaymentInstrument[] {
+	const raw = process.env.STRIPE_AVAILABLE_INSTRUMENTS;
+	if (!raw) return DEFAULT_STRIPE_INSTRUMENTS;
+	const parsed = raw
+		.split(",")
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+	return parsed.length > 0 ? (parsed as UcpPaymentInstrument[]) : DEFAULT_STRIPE_INSTRUMENTS;
 }

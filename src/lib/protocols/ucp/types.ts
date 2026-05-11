@@ -47,10 +47,39 @@ export interface UcpCapability {
 	extends?: string;
 }
 
+/**
+ * Payment instruments per UCP 2026-04-08 `available_payment_instruments`.
+ *
+ * Open enum — known values get IntelliSense, but agents may publish strings
+ * we don't know about yet (e.g. region-specific schemes). The `string & {}`
+ * trick keeps the union open without collapsing literal completion.
+ */
+export type UcpPaymentInstrument =
+	| "card"
+	| "card.visa"
+	| "card.mastercard"
+	| "card.amex"
+	| "sepa_debit"
+	| "klarna"
+	| "affirm"
+	| "paypal"
+	| "apple_pay"
+	| "google_pay"
+	| "stablecoin.usdc"
+	| "stablecoin.usdg"
+	| "wallet.link"
+	| (string & {});
+
+/** Configuration block of a UCP payment handler. */
+export interface UcpPaymentHandlerConfig {
+	publishable_key?: string;
+	available_payment_instruments: UcpPaymentInstrument[];
+}
+
 export interface UcpPaymentHandler {
 	id: string;
 	version: string;
-	config: Record<string, string>;
+	config: UcpPaymentHandlerConfig;
 }
 
 export interface UcpSigningKey {

@@ -79,3 +79,70 @@ describe("buildUcpProfile (UCP 2026-04-08)", () => {
 		expect(key.public_key).toHaveLength(44);
 	});
 });
+
+describe("buildUcpProfile — payment handler instruments (A6)", () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		vi.resetModules();
+	});
+
+	it("does not advertise the Stripe handler when no publishable key is set", async () => {
+		vi.resetModules();
+		vi.stubEnv("STRIPE_PUBLISHABLE_KEY", "");
+		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
+		const profile = await buildUcpProfile();
+		expect(profile.ucp.payment_handlers).toEqual({});
+	});
+
+	it("advertises the Stripe handler with default instruments=['card'] when env override is absent", async () => {
+		vi.resetModules();
+		vi.stubEnv("STRIPE_PUBLISHABLE_KEY", "pk_test_123");
+		vi.stubEnv("STRIPE_AVAILABLE_INSTRUMENTS", "");
+		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
+		const profile = await buildUcpProfile();
+
+		const handlers = profile.ucp.payment_handlers["com.stripe.shared_payment_token"];
+		expect(handlers).toHaveLength(1);
+		const handler = handlers![0]!;
+		expect(handler.id).toBe("stripe_spt");
+		expect(handler.config.publishable_key).toBe("pk_test_123");
+		expect(handler.config.available_payment_instruments).toEqual(["card"]);
+	});
+
+	it("parses STRIPE_AVAILABLE_INSTRUMENTS comma-separated, trimming whitespace", async () => {
+		vi.resetModules();
+		vi.stubEnv("STRIPE_PUBLISHABLE_KEY", "pk_test_123");
+		vi.stubEnv("STRIPE_AVAILABLE_INSTRUMENTS", "card, apple_pay,google_pay ,klarna ,affirm");
+		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
+		const profile = await buildUcpProfile();
+
+		const handler = profile.ucp.payment_handlers["com.stripe.shared_payment_token"]![0]!;
+		expect(handler.config.available_payment_instruments).toEqual([
+			"card",
+			"apple_pay",
+			"google_pay",
+			"klarna",
+			"affirm",
+		]);
+	});
+
+	it("falls back to default ['card'] when STRIPE_AVAILABLE_INSTRUMENTS is only commas/whitespace", async () => {
+		vi.resetModules();
+		vi.stubEnv("STRIPE_PUBLISHABLE_KEY", "pk_test_123");
+		vi.stubEnv("STRIPE_AVAILABLE_INSTRUMENTS", " , , ,");
+		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
+		const profile = await buildUcpProfile();
+		const handler = profile.ucp.payment_handlers["com.stripe.shared_payment_token"]![0]!;
+		expect(handler.config.available_payment_instruments).toEqual(["card"]);
+	});
+
+	it("accepts open-enum strings (region-specific instruments not in the closed list)", async () => {
+		vi.resetModules();
+		vi.stubEnv("STRIPE_PUBLISHABLE_KEY", "pk_test_123");
+		vi.stubEnv("STRIPE_AVAILABLE_INSTRUMENTS", "card,cz.comgate,sk.tatrapay");
+		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
+		const profile = await buildUcpProfile();
+		const handler = profile.ucp.payment_handlers["com.stripe.shared_payment_token"]![0]!;
+		expect(handler.config.available_payment_instruments).toEqual(["card", "cz.comgate", "sk.tatrapay"]);
+	});
+});
