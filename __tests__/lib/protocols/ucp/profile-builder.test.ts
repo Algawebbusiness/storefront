@@ -152,3 +152,154 @@ describe("buildUcpProfile — payment handler instruments (A6)", () => {
 		expect(handler.config.available_payment_instruments).toEqual(["card", "cz.comgate", "sk.tatrapay"]);
 	});
 });
+
+describe("buildUcpProfile — accepted_platforms (B8)", () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		vi.resetModules();
+	});
+
+	it("omits accepted_platforms when no agents are registered", async () => {
+		vi.resetModules();
+		vi.stubEnv("AGENT_REGISTRY_JSON", "");
+		vi.stubEnv("PAYLOAD_API_URL", "");
+		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
+		const profile = await buildUcpProfile();
+		expect(profile.accepted_platforms).toBeUndefined();
+	});
+
+	it("groups agents by platform, drops 'custom', surfaces public_keys", async () => {
+		vi.resetModules();
+		vi.stubEnv("PAYLOAD_API_URL", "");
+		vi.stubEnv(
+			"AGENT_REGISTRY_JSON",
+			JSON.stringify([
+				{
+					id: "openai-prod",
+					display_name: "ChatGPT",
+					platform: "openai",
+					status: "active",
+					public_key: "AAA=",
+					scope: ["catalog.read"],
+					spending_limit: { per_session_cents: null, per_day_cents: null, per_month_cents: null },
+					rate_limit: { requests_per_minute: 60, sessions_per_day: 500 },
+					created_at: "2026-05-01T00:00:00Z",
+					updated_at: "2026-05-01T00:00:00Z",
+				},
+				{
+					id: "openai-staging",
+					display_name: "ChatGPT staging",
+					platform: "openai",
+					status: "active",
+					public_key: "BBB=",
+					scope: ["catalog.read"],
+					spending_limit: { per_session_cents: null, per_day_cents: null, per_month_cents: null },
+					rate_limit: { requests_per_minute: 60, sessions_per_day: 500 },
+					created_at: "2026-05-01T00:00:00Z",
+					updated_at: "2026-05-01T00:00:00Z",
+				},
+				{
+					id: "internal-tool",
+					display_name: "Internal scheduler",
+					platform: "custom",
+					status: "active",
+					public_key: "CCC=",
+					scope: ["catalog.read"],
+					spending_limit: { per_session_cents: null, per_day_cents: null, per_month_cents: null },
+					rate_limit: { requests_per_minute: 60, sessions_per_day: 500 },
+					created_at: "2026-05-01T00:00:00Z",
+					updated_at: "2026-05-01T00:00:00Z",
+				},
+			]),
+		);
+
+		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
+		const profile = await buildUcpProfile();
+		expect(profile.accepted_platforms).toBeDefined();
+		const openai = profile.accepted_platforms!.find((p) => p.platform === "openai");
+		expect(openai).toBeDefined();
+		expect(openai!.display_name).toContain("OpenAI");
+		expect(openai!.trust_level).toBe("verified");
+		expect(openai!.public_keys.sort()).toEqual(["AAA=", "BBB="]);
+		// 'custom' platform must not surface in the public profile
+		expect(profile.accepted_platforms!.some((p) => (p.platform as string) === "custom")).toBe(false);
+	});
+
+	it("excludes suspended/revoked agents from accepted_platforms", async () => {
+		vi.resetModules();
+		vi.stubEnv("PAYLOAD_API_URL", "");
+		vi.stubEnv(
+			"AGENT_REGISTRY_JSON",
+			JSON.stringify([
+				{
+					id: "g1",
+					display_name: "Gemini active",
+					platform: "google",
+					status: "active",
+					public_key: "GA=",
+					scope: ["catalog.read"],
+					spending_limit: { per_session_cents: null, per_day_cents: null, per_month_cents: null },
+					rate_limit: { requests_per_minute: 60, sessions_per_day: 500 },
+					created_at: "2026-05-01T00:00:00Z",
+					updated_at: "2026-05-01T00:00:00Z",
+				},
+				{
+					id: "g2",
+					display_name: "Gemini suspended",
+					platform: "google",
+					status: "suspended",
+					public_key: "GS=",
+					scope: ["catalog.read"],
+					spending_limit: { per_session_cents: null, per_day_cents: null, per_month_cents: null },
+					rate_limit: { requests_per_minute: 60, sessions_per_day: 500 },
+					created_at: "2026-05-01T00:00:00Z",
+					updated_at: "2026-05-01T00:00:00Z",
+				},
+			]),
+		);
+
+		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
+		const profile = await buildUcpProfile();
+		const google = profile.accepted_platforms!.find((p) => p.platform === "google");
+		expect(google!.public_keys).toEqual(["GA="]);
+	});
+
+	it("excludes agents with empty public_key (synthetic legacy bearer)", async () => {
+		vi.resetModules();
+		vi.stubEnv("PAYLOAD_API_URL", "");
+		vi.stubEnv(
+			"AGENT_REGISTRY_JSON",
+			JSON.stringify([
+				{
+					id: "real",
+					display_name: "Anthropic real",
+					platform: "anthropic",
+					status: "active",
+					public_key: "AN=",
+					scope: ["catalog.read"],
+					spending_limit: { per_session_cents: null, per_day_cents: null, per_month_cents: null },
+					rate_limit: { requests_per_minute: 60, sessions_per_day: 500 },
+					created_at: "2026-05-01T00:00:00Z",
+					updated_at: "2026-05-01T00:00:00Z",
+				},
+				{
+					id: "unkeyed",
+					display_name: "Anthropic legacy",
+					platform: "anthropic",
+					status: "active",
+					public_key: "",
+					scope: ["catalog.read"],
+					spending_limit: { per_session_cents: null, per_day_cents: null, per_month_cents: null },
+					rate_limit: { requests_per_minute: 60, sessions_per_day: 500 },
+					created_at: "2026-05-01T00:00:00Z",
+					updated_at: "2026-05-01T00:00:00Z",
+				},
+			]),
+		);
+
+		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
+		const profile = await buildUcpProfile();
+		const anthropic = profile.accepted_platforms!.find((p) => p.platform === "anthropic");
+		expect(anthropic!.public_keys).toEqual(["AN="]);
+	});
+});

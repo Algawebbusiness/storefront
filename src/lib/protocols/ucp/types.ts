@@ -14,6 +14,24 @@ export interface UcpProfile {
 		payment_handlers: Record<string, UcpPaymentHandler[]>;
 	};
 	signing_keys: UcpSigningKey[];
+	/** Phase B8: agent platforms this storefront accepts and trusts. */
+	accepted_platforms?: AcceptedPlatform[];
+}
+
+/**
+ * Public declaration of an agent platform the storefront treats as trusted.
+ *
+ * Built from the active agent registry (B2): every active `AgentIdentity` is
+ * grouped by `platform`, and `public_keys[]` contains the keys of agents on
+ * that platform. Agents can use this to discover whether their platform is
+ * pre-approved and which key they should sign requests with.
+ */
+export interface AcceptedPlatform {
+	platform: "openai" | "google" | "anthropic" | "microsoft";
+	display_name: string;
+	trust_level: "verified" | "experimental";
+	public_keys: string[];
+	contact_url?: string;
 }
 
 export interface UcpService {

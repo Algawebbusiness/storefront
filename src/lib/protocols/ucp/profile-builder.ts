@@ -9,6 +9,8 @@
  * advertised set without touching this builder.
  */
 
+import { listActiveAgents } from "../shared/agent-registry";
+import type { AgentIdentity } from "../shared/agent-registry-types";
 import { getPublicKeyBase64, getSigningKey } from "../shared/signing";
 import {
 	ALL_BUSINESS_CAPABILITIES,
@@ -17,7 +19,13 @@ import {
 	UCP_VERSION,
 	type CapabilityDef,
 } from "./capabilities";
-import type { UcpCapability, UcpPaymentInstrument, UcpProfile, UcpSigningKey } from "./types";
+import type {
+	AcceptedPlatform,
+	UcpCapability,
+	UcpPaymentInstrument,
+	UcpProfile,
+	UcpSigningKey,
+} from "./types";
 
 /** Default set of payment instruments when no env override is provided. */
 const DEFAULT_STRIPE_INSTRUMENTS: UcpPaymentInstrument[] = ["card"];
@@ -27,7 +35,10 @@ export async function buildUcpProfile(): Promise<UcpProfile> {
 	const baseUrl = process.env.NEXT_PUBLIC_STOREFRONT_URL || "http://localhost:3000";
 	const stripeKey = process.env.STRIPE_PUBLISHABLE_KEY;
 	const stripeInstruments = parseStripeInstruments();
-	const signingKeys = await collectSigningKeys();
+	const [signingKeys, acceptedPlatforms] = await Promise.all([
+		collectSigningKeys(),
+		collectAcceptedPlatforms(),
+	]);
 
 	return {
 		ucp: {
@@ -73,6 +84,7 @@ export async function buildUcpProfile(): Promise<UcpProfile> {
 		},
 
 		signing_keys: signingKeys,
+		...(acceptedPlatforms.length > 0 ? { accepted_platforms: acceptedPlatforms } : {}),
 	};
 }
 
@@ -95,6 +107,53 @@ async function collectSigningKeys(): Promise<UcpSigningKey[]> {
 		},
 	];
 }
+
+/**
+ * Phase B8: derive `accepted_platforms[]` from the active agent registry.
+ *
+ * Group agents by platform, drop `custom` (used internally only — agents
+ * outside the four named platforms aren't a "trusted public discovery"
+ * signal), surface every agent's public_key for that platform.
+ *
+ * Returns an empty array when no agents are registered — the profile then
+ * omits the `accepted_platforms` field entirely.
+ */
+async function collectAcceptedPlatforms(): Promise<AcceptedPlatform[]> {
+	let agents: AgentIdentity[];
+	try {
+		agents = await listActiveAgents();
+	} catch {
+		return [];
+	}
+	if (agents.length === 0) return [];
+
+	const grouped = new Map<AcceptedPlatform["platform"], string[]>();
+	for (const agent of agents) {
+		if (agent.platform === "custom") continue;
+		if (!agent.public_key) continue; // legacy synthetic / unkeyed agents excluded
+		const existing = grouped.get(agent.platform) ?? [];
+		if (!existing.includes(agent.public_key)) existing.push(agent.public_key);
+		grouped.set(agent.platform, existing);
+	}
+
+	const out: AcceptedPlatform[] = [];
+	for (const [platform, public_keys] of grouped.entries()) {
+		out.push({
+			platform,
+			display_name: PLATFORM_DISPLAY[platform],
+			trust_level: "verified",
+			public_keys,
+		});
+	}
+	return out;
+}
+
+const PLATFORM_DISPLAY: Record<AcceptedPlatform["platform"], string> = {
+	openai: "OpenAI (ChatGPT)",
+	google: "Google (Gemini)",
+	anthropic: "Anthropic (Claude)",
+	microsoft: "Microsoft (Copilot)",
+};
 
 /**
  * Parse `STRIPE_AVAILABLE_INSTRUMENTS` env var (comma-separated) into the typed
