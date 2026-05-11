@@ -57,6 +57,27 @@ export async function importPublicKeyFromBase64(base64PublicKey: string): Promis
 }
 
 /**
+ * Verify a detached ed25519 signature against an arbitrary base64 public key.
+ *
+ * Convenience for the agent-side path (B3): the storefront receives a request
+ * signed by an agent whose public_key lives in the registry. Returns `false`
+ * on any error (invalid base64, malformed signature, key import failure,
+ * signature mismatch) so middleware can do `if (!ok) return 401`.
+ */
+export async function verifyDetached(
+	body: string,
+	signatureBase64: string,
+	publicKeyBase64: string,
+): Promise<boolean> {
+	try {
+		const publicKey = await importPublicKeyFromBase64(publicKeyBase64);
+		return await verifySignature(body, signatureBase64, publicKey);
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Export the active signing key's public part as base64-encoded raw 32 bytes.
  * Used by the UCP profile builder to publish `signing_keys[].public_key`.
  */
