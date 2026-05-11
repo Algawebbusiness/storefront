@@ -7,41 +7,36 @@
  * up to 50 immediate children per category. Cached for 5 minutes.
  */
 
-import { validateAgentApiKey } from "@/lib/protocols/shared/auth";
 import { mapCategoryToCatalogCategory } from "@/lib/protocols/shared/catalog-mapper";
 import { CATALOG_CATEGORIES_QUERY, type CatalogCategoriesData } from "@/lib/protocols/shared/catalog-queries";
-import {
-	signedJsonResponse,
-	signedProtocolDisabled,
-	signedUnauthorized,
-} from "@/lib/protocols/shared/response";
+import { signedJsonResponse } from "@/lib/protocols/shared/response";
+import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
 import { getDefaultChannel, saleorQuery } from "@/mcp-server/saleor-client";
 
 export const revalidate = 300;
 
-export async function GET(request: Request) {
-	if (process.env.UCP_ENABLED !== "true") {
-		return signedProtocolDisabled("UCP");
-	}
+export const GET = withUcpRoute(
+	{ action: "catalog.list_categories", scope: "catalog.read" },
+	async (_request, auth) => {
+		const channel = getDefaultChannel();
+		const result = await saleorQuery<CatalogCategoriesData>(CATALOG_CATEGORIES_QUERY, {
+			first: 100,
+			channel,
+		});
 
-	const auth = validateAgentApiKey(request);
-	if (!auth.valid) {
-		return signedUnauthorized();
-	}
+		if (!result.ok) {
+			return signedJsonResponse(
+				{ error: { code: "server_error", message: result.error } },
+				{ status: 500 },
+			);
+		}
 
-	const channel = getDefaultChannel();
-	const result = await saleorQuery<CatalogCategoriesData>(CATALOG_CATEGORIES_QUERY, {
-		first: 100,
-		channel,
-	});
+		const categories = result.data.categories.edges.map((edge) =>
+			mapCategoryToCatalogCategory(edge.node),
+		);
 
-	if (!result.ok) {
-		return signedJsonResponse({ error: { code: "server_error", message: result.error } }, { status: 500 });
-	}
-
-	const categories = result.data.categories.edges.map((edge) => mapCategoryToCatalogCategory(edge.node));
-
-	const ucpMeta = await buildUcpMeta(auth.profileUrl);
-	return signedJsonResponse({ ucp: ucpMeta, categories });
-}
+		const ucpMeta = await buildUcpMeta(auth.profileUrl);
+		return signedJsonResponse({ ucp: ucpMeta, categories });
+	},
+);

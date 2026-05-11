@@ -5,8 +5,8 @@
 > **Stav implementace (květen 2026):**
 > - **Fáze A (A1–A10): ✅ COMPLETE** — UCP 2026-04-08 parita, ed25519 signed responses, cart/catalog/context/totals/payment-instruments capabilities.
 > - **Fáze B (B1–B10): ✅ COMPLETE** — Agent identity & trust layer (registry + signed requests + activity log + per-agent caps + approval flow + OAuth identity binding + accepted_platforms publishing + 180-day migration timeline + abuse detection). 296/296 tests pass.
->   - **OPEN:** Route adoption — UCP routes still call legacy `validateAgentApiKey`. Plánovaný route-migration commit přepíše 12 UCP routes na `verifyAgentRequest` + `withAgentActivityLog` wrapper + `checkLimits` před každou mutating operací. Viz [Route migration plan](#route-migration-plan-fáze-b-→-routes) níže.
-> - **Fáze C–E: čekají.** C (post-order/multi-payment) a B mohou běžet paralelně, ale teď půjdeme C po B route adoption.
+> - **Fáze B route adoption: ✅ COMPLETE** — 12 UCP REST routes přepsány na `withUcpRoute()` (kombinuje `verifyAgentRequest` + `hasScope` + `checkLimits` + `withAgentActivityLog`). `POST /checkout-sessions/[id]/complete` enforcuje per-session spending cap *před* Saleor mutací i Stripe nabitím. 315/315 tests pass (+19 nových).
+> - **Fáze C–E: čekají.** C (post-order/multi-payment) může běžet teď.
 >
 > Před implementační prací načti relevantní krok z `agentic-commerce-2026-plan.md`.
 >
