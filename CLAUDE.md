@@ -11,7 +11,8 @@
 > - **Fáze F (F1–F2): 🚧 IN PROGRESS** — MCP Apps infrastructure layer:
 >   - **F1 ✅** — Vite single-file build pipeline (`src/mcp-apps/`), `@modelcontextprotocol/ext-apps@1.7.1` dep + SDK bump na `^1.29`. 6 view bundles ~59 KB gzip každý.
 >   - **F2 ✅** — Resource server (`registerAllAppResources()` napojen do MCP serveru), CSP allowlist z env, tenant theme injection (`brand.css` + `window.__BRAND__` před React mountem), klient bridge wrapping `App` třídu. 407/407 tests pass.
->   - **F3–F9 čekají** — data classification + visibility policy, view components proti reálným Saleor datům, fallback strategy, docs. Spec resolved: CSP shape je `{ resourceDomains, connectDomains }`; tool-level `visibility` je o callability, ne content-visibility (F3 policy se přeformuluje pro per-content-block mechanism).
+>   - **F3 (replanned)** — data classification + **paired-tool PII isolation** + prompt-injection defense. Spec deep-dive resolved: per-content-block visibility NEexistuje. Náhrada = kanonický spec pattern: `registerToolPair({model, app})` registruje dvojici, app-tool má `visibility: ["app"]` a není v `tools/list`. Iframe po `ontoolresult` volá `fetchAppData("<tool>_full")`. Plus `sanitizeForLlm` + `wrapAsData` delimiter + typed-enum `ui/message`.
+>   - **F4–F9 čekají** — view components proti reálným Saleor datům, fallback, docs.
 > - **Fáze D: čeká.** Czech moat (Comgate, GoPay, Zásilkovna jako UCP fulfillment, ARES IČO/DIČ). D a F jsou nezávislé.
 >
 > Před implementační prací načti relevantní krok z `agentic-commerce-2026-plan.md`.
