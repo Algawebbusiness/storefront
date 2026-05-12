@@ -8,10 +8,10 @@
 > - **Fáze B (B1–B10): ✅ COMPLETE** — Agent identity & trust layer (registry + signed requests + activity log + per-agent caps + approval flow + OAuth identity binding + accepted_platforms publishing + 180-day migration timeline + abuse detection). 296/296 tests pass.
 > - **Fáze B route adoption: ✅ COMPLETE** — 12 UCP REST routes přepsány na `withUcpRoute()` (kombinuje `verifyAgentRequest` + `hasScope` + `checkLimits` + `withAgentActivityLog`). `POST /checkout-sessions/[id]/complete` enforcuje per-session spending cap _před_ Saleor mutací i Stripe nabitím. 315/315 tests pass (+19 nových).
 > - **Fáze C (C1–C10): ✅ COMPLETE** — Returns capability + Saleor refund wiring + webhook ORDER_REFUNDED + agent-webhook delivery (retry+sign) + eligibility framework + disclosure contracts + payment-handler registry + Stripe Link / stablecoin / MPP handlers + loyalty capability. 394/394 tests pass.
-> - **Fáze F (F1–F2): 🚧 IN PROGRESS** — MCP Apps infrastructure layer:
+> - **Fáze F (F1–F3): 🚧 IN PROGRESS** — MCP Apps infrastructure + security:
 >   - **F1 ✅** — Vite single-file build pipeline (`src/mcp-apps/`), `@modelcontextprotocol/ext-apps@1.7.1` dep + SDK bump na `^1.29`. 6 view bundles ~59 KB gzip každý.
->   - **F2 ✅** — Resource server (`registerAllAppResources()` napojen do MCP serveru), CSP allowlist z env, tenant theme injection (`brand.css` + `window.__BRAND__` před React mountem), klient bridge wrapping `App` třídu. 407/407 tests pass.
->   - **F3 (replanned)** — data classification + **paired-tool PII isolation** + prompt-injection defense. Spec deep-dive resolved: per-content-block visibility NEexistuje. Náhrada = kanonický spec pattern: `registerToolPair({model, app})` registruje dvojici, app-tool má `visibility: ["app"]` a není v `tools/list`. Iframe po `ontoolresult` volá `fetchAppData("<tool>_full")`. Plus `sanitizeForLlm` + `wrapAsData` delimiter + typed-enum `ui/message`.
+>   - **F2 ✅** — Resource server (`registerAllAppResources()`), CSP allowlist z env, tenant theme injection (`brand.css` + `window.__BRAND__`), klient bridge wrapping `App` třídu.
+>   - **F3 ✅** — Paired-tool PII isolation + prompt-injection defense. `data-policy.ts` (5-class FIELD_CLASSES + helpers), `paired-tools.ts` (`registerToolPair` ↔ `_full` app-only sibling), `sanitize.ts` (`sanitizeForLlm` 12 vektorů + `wrapAsData` delimiter), `ui-messages.ts` typed-enum + `bridge.ts` `sendUiMessage` + `fetchAppData`. Threat model `docs/mcp-apps-threat-model.md`. 455/455 tests pass.
 >   - **F4–F9 čekají** — view components proti reálným Saleor datům, fallback, docs.
 > - **Fáze D: čeká.** Czech moat (Comgate, GoPay, Zásilkovna jako UCP fulfillment, ARES IČO/DIČ). D a F jsou nezávislé.
 >
