@@ -17,8 +17,6 @@ import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
 import { getDefaultChannel, saleorQuery } from "@/mcp-server/saleor-client";
 
-export const revalidate = 300;
-
 interface ProductParams {
 	slug: string;
 }
@@ -37,10 +35,7 @@ export const GET = withUcpRoute<ProductParams>(
 		});
 
 		if (!result.ok) {
-			return signedJsonResponse(
-				{ error: { code: "server_error", message: result.error } },
-				{ status: 500 },
-			);
+			return signedJsonResponse({ error: { code: "server_error", message: result.error } }, { status: 500 });
 		}
 
 		if (!result.data.product) {

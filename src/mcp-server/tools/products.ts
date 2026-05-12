@@ -1,6 +1,6 @@
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { saleorQuery, getDefaultChannel } from "../saleor-client.js";
+import { saleorQuery, getDefaultChannel } from "../saleor-client";
 
 const PRODUCT_DETAIL_QUERY = `
 	query MCPProductDetail($slug: String!, $channel: String!) {
@@ -149,11 +149,7 @@ export function registerProductTools(server: McpServer) {
 		"compare_products",
 		"Compare 2-5 products side by side. Returns a comparison table with prices, attributes, and availability.",
 		{
-			slugs: z
-				.array(z.string())
-				.min(2)
-				.max(5)
-				.describe("Product slugs to compare"),
+			slugs: z.array(z.string()).min(2).max(5).describe("Product slugs to compare"),
 			channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
 		},
 		async ({ slugs, channel }) => {
@@ -170,9 +166,7 @@ export function registerProductTools(server: McpServer) {
 			}
 
 			return {
-				content: [
-					{ type: "text" as const, text: JSON.stringify({ comparison: products }, null, 2) },
-				],
+				content: [{ type: "text" as const, text: JSON.stringify({ comparison: products }, null, 2) }],
 			};
 		},
 	);

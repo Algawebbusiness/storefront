@@ -25,8 +25,6 @@ import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
 import { getDefaultChannel, saleorQuery } from "@/mcp-server/saleor-client";
 
-export const revalidate = 300;
-
 const DEFAULT_LIMIT = 24;
 const MAX_LIMIT = 100;
 
@@ -88,10 +86,7 @@ export const GET = withUcpRoute(
 		});
 
 		if (!result.ok) {
-			return signedJsonResponse(
-				{ error: { code: "server_error", message: result.error } },
-				{ status: 500 },
-			);
+			return signedJsonResponse({ error: { code: "server_error", message: result.error } }, { status: 500 });
 		}
 
 		const items = result.data.products.edges.map((edge) =>

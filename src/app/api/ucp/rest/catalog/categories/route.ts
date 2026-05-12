@@ -14,8 +14,6 @@ import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
 import { getDefaultChannel, saleorQuery } from "@/mcp-server/saleor-client";
 
-export const revalidate = 300;
-
 export const GET = withUcpRoute(
 	{ action: "catalog.list_categories", scope: "catalog.read" },
 	async (_request, auth) => {
@@ -26,15 +24,10 @@ export const GET = withUcpRoute(
 		});
 
 		if (!result.ok) {
-			return signedJsonResponse(
-				{ error: { code: "server_error", message: result.error } },
-				{ status: 500 },
-			);
+			return signedJsonResponse({ error: { code: "server_error", message: result.error } }, { status: 500 });
 		}
 
-		const categories = result.data.categories.edges.map((edge) =>
-			mapCategoryToCatalogCategory(edge.node),
-		);
+		const categories = result.data.categories.edges.map((edge) => mapCategoryToCatalogCategory(edge.node));
 
 		const ucpMeta = await buildUcpMeta(auth.profileUrl);
 		return signedJsonResponse({ ucp: ucpMeta, categories });

@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerSearchTools } from "./tools/search.js";
-import { registerCategoryTools } from "./tools/categories.js";
-import { registerProductTools } from "./tools/products.js";
-import { registerCollectionTools } from "./tools/collections.js";
-import { registerStoreInfoTools } from "./tools/store-info.js";
-import { registerCheckoutTools } from "./tools/checkout.js";
+import { registerSearchTools } from "./tools/search";
+import { registerCategoryTools } from "./tools/categories";
+import { registerProductTools } from "./tools/products";
+import { registerCollectionTools } from "./tools/collections";
+import { registerStoreInfoTools } from "./tools/store-info";
+import { registerCheckoutTools } from "./tools/checkout";
 
 /**
  * MCP server for the Saleor storefront.

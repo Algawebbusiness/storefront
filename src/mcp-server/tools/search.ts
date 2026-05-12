@@ -1,6 +1,6 @@
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { saleorQuery, getDefaultChannel } from "../saleor-client.js";
+import { saleorQuery, getDefaultChannel } from "../saleor-client";
 
 const SEARCH_QUERY = `
 	query MCPSearchProducts($search: String!, $first: Int!, $channel: String!) {
@@ -96,11 +96,7 @@ export function registerSearchTools(server: McpServer) {
 				content: [
 					{
 						type: "text" as const,
-						text: JSON.stringify(
-							{ totalCount: data.products.totalCount, products },
-							null,
-							2,
-						),
+						text: JSON.stringify({ totalCount: data.products.totalCount, products }, null, 2),
 					},
 				],
 			};

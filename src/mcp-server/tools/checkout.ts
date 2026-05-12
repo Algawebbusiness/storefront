@@ -7,7 +7,7 @@
 
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { saleorQuery, getDefaultChannel } from "../saleor-client.js";
+import { saleorQuery, getDefaultChannel } from "../saleor-client";
 import {
 	CHECKOUT_CREATE_MUTATION,
 	CHECKOUT_BY_ID_QUERY,
@@ -25,9 +25,9 @@ import {
 	type CheckoutDeliveryMethodUpdateData,
 	type CheckoutAddPromoCodeData,
 	type CheckoutCompleteData,
-} from "@/lib/protocols/shared/checkout-queries.js";
-import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper.js";
-import { processStripePayment } from "@/lib/protocols/shared/payment.js";
+} from "@/lib/protocols/shared/checkout-queries";
+import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
+import { processStripePayment } from "@/lib/protocols/shared/payment";
 
 /** Validate api_key against AGENT_API_KEYS env var */
 function validateApiKey(apiKey: string): boolean {
@@ -186,7 +186,15 @@ export function registerCheckoutTools(server: McpServer) {
 			delivery_method_id: z.string().optional().describe("Shipping/delivery method ID"),
 			promo_code: z.string().optional().describe("Promo/voucher code to apply"),
 		},
-		async ({ api_key, checkout_id, email, shipping_address, billing_address, delivery_method_id, promo_code }) => {
+		async ({
+			api_key,
+			checkout_id,
+			email,
+			shipping_address,
+			billing_address,
+			delivery_method_id,
+			promo_code,
+		}) => {
 			if (!validateApiKey(api_key)) {
 				return authError();
 			}
@@ -202,9 +210,7 @@ export function registerCheckoutTools(server: McpServer) {
 				if (!r.ok) {
 					allErrors.push(`Email update failed: ${r.error}`);
 				} else if (r.data.checkoutEmailUpdate.errors.length > 0) {
-					allErrors.push(
-						...r.data.checkoutEmailUpdate.errors.map((e) => `Email: ${e.message}`),
-					);
+					allErrors.push(...r.data.checkoutEmailUpdate.errors.map((e) => `Email: ${e.message}`));
 				}
 			}
 
@@ -258,9 +264,7 @@ export function registerCheckoutTools(server: McpServer) {
 				if (!r.ok) {
 					allErrors.push(`Promo code failed: ${r.error}`);
 				} else if (r.data.checkoutAddPromoCode.errors.length > 0) {
-					allErrors.push(
-						...r.data.checkoutAddPromoCode.errors.map((e) => `Promo code: ${e.message}`),
-					);
+					allErrors.push(...r.data.checkoutAddPromoCode.errors.map((e) => `Promo code: ${e.message}`));
 				}
 			}
 
@@ -314,11 +318,7 @@ export function registerCheckoutTools(server: McpServer) {
 					content: [
 						{
 							type: "text" as const,
-							text: JSON.stringify(
-								{ error: `Payment failed: ${paymentResult.error}` },
-								null,
-								2,
-							),
+							text: JSON.stringify({ error: `Payment failed: ${paymentResult.error}` }, null, 2),
 						},
 					],
 				};

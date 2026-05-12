@@ -148,9 +148,9 @@
 	},
 	"search": {
 		"placeholder": "Hledat produkty...",
-		"resultsFor": "Výsledky pro „{query}"",
+		"resultsFor": "Výsledky pro „{query}“",
 		"productsFound": "{count, plural, one {# produkt} few {# produkty} other {# produktů}} nalezeno",
-		"noResults": "Žádné výsledky pro „{query}"",
+		"noResults": "Žádné výsledky pro „{query}“",
 		"noResultsDescription": "Nepodařilo se najít žádné produkty odpovídající vašemu hledání. Zkuste jiný výraz nebo procházejte naše kategorie.",
 		"browseAll": "Zobrazit všechny produkty",
 		"goToHomepage": "Přejít na hlavní stránku"

@@ -1,6 +1,6 @@
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { saleorQuery, getDefaultChannel } from "../saleor-client.js";
+import { saleorQuery, getDefaultChannel } from "../saleor-client";
 
 const ALL_CATEGORIES_QUERY = `
 	query MCPAllCategories($first: Int!, $channel: String!) {
