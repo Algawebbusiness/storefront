@@ -3,11 +3,16 @@
 > **Active implementation plan:** [`agentic-commerce-2026-plan.md`](./agentic-commerce-2026-plan.md) — 5-phase upgrade na **UCP `2026-04-08`** + Stripe Sessions 2026 (50 kroků).
 >
 > **Stav implementace (květen 2026):**
+>
 > - **Fáze A (A1–A10): ✅ COMPLETE** — UCP 2026-04-08 parita, ed25519 signed responses, cart/catalog/context/totals/payment-instruments capabilities.
 > - **Fáze B (B1–B10): ✅ COMPLETE** — Agent identity & trust layer (registry + signed requests + activity log + per-agent caps + approval flow + OAuth identity binding + accepted_platforms publishing + 180-day migration timeline + abuse detection). 296/296 tests pass.
-> - **Fáze B route adoption: ✅ COMPLETE** — 12 UCP REST routes přepsány na `withUcpRoute()` (kombinuje `verifyAgentRequest` + `hasScope` + `checkLimits` + `withAgentActivityLog`). `POST /checkout-sessions/[id]/complete` enforcuje per-session spending cap *před* Saleor mutací i Stripe nabitím. 315/315 tests pass (+19 nových).
+> - **Fáze B route adoption: ✅ COMPLETE** — 12 UCP REST routes přepsány na `withUcpRoute()` (kombinuje `verifyAgentRequest` + `hasScope` + `checkLimits` + `withAgentActivityLog`). `POST /checkout-sessions/[id]/complete` enforcuje per-session spending cap _před_ Saleor mutací i Stripe nabitím. 315/315 tests pass (+19 nových).
 > - **Fáze C (C1–C10): ✅ COMPLETE** — Returns capability + Saleor refund wiring + webhook ORDER_REFUNDED + agent-webhook delivery (retry+sign) + eligibility framework + disclosure contracts + payment-handler registry + Stripe Link / stablecoin / MPP handlers + loyalty capability. 394/394 tests pass.
-> - **Fáze D–F: čekají.** D = Czech moat (Comgate, GoPay, Zásilkovna jako UCP fulfillment, ARES IČO/DIČ). F = MCP Apps / agent-native UI (9 kroků, `_meta.ui.resourceUri` → sandboxovaný iframe v Claude/VS Code Copilot/Goose, product carousels + cart preview + checkout summary, s PII-safe-by-default `visibility: ["app"]` policy + delimiter-wrapped sanitizace prompt-injection vektorů). D a F jsou nezávislé.
+> - **Fáze F (F1–F2): 🚧 IN PROGRESS** — MCP Apps infrastructure layer:
+>   - **F1 ✅** — Vite single-file build pipeline (`src/mcp-apps/`), `@modelcontextprotocol/ext-apps@1.7.1` dep + SDK bump na `^1.29`. 6 view bundles ~59 KB gzip každý.
+>   - **F2 ✅** — Resource server (`registerAllAppResources()` napojen do MCP serveru), CSP allowlist z env, tenant theme injection (`brand.css` + `window.__BRAND__` před React mountem), klient bridge wrapping `App` třídu. 407/407 tests pass.
+>   - **F3–F9 čekají** — data classification + visibility policy, view components proti reálným Saleor datům, fallback strategy, docs. Spec resolved: CSP shape je `{ resourceDomains, connectDomains }`; tool-level `visibility` je o callability, ne content-visibility (F3 policy se přeformuluje pro per-content-block mechanism).
+> - **Fáze D: čeká.** Czech moat (Comgate, GoPay, Zásilkovna jako UCP fulfillment, ARES IČO/DIČ). D a F jsou nezávislé.
 >
 > Před implementační prací načti relevantní krok z `agentic-commerce-2026-plan.md`.
 >
@@ -23,32 +28,32 @@
 
 ### Co se mění v každé route
 
-| Před | Po |
-|------|-----|
-| `import { validateAgentApiKey } from "@/lib/protocols/shared/auth";` | `import { verifyAgentRequest } from "@/lib/protocols/shared/auth";` |
-| `const auth = validateAgentApiKey(request);` | `const verify = await verifyAgentRequest(request);` |
-| `if (!auth.valid) return signedUnauthorized();` | `if (!verify.ok) return signedUnauthorized(verify.reason);` |
-| `auth.profileUrl` → `buildUcpMeta(...)` | `verify.profileUrl` → `buildUcpMeta(...)` |
-| `await request.json()` / `await request.text()` | `JSON.parse(verify.bodyText)` (body už byl konzumován middleware) |
-| Mutující route bez limit checku | Před mutací: `await checkLimits(verify.agent, amountCents?, sessionId?)` → 429 pokud blocked |
-| Handler return | Obal celého handleru `withAgentActivityLog({ agent_id, action, scope, resource_id, amount_cents }, async () => {...})` |
+| Před                                                                 | Po                                                                                                                     |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `import { validateAgentApiKey } from "@/lib/protocols/shared/auth";` | `import { verifyAgentRequest } from "@/lib/protocols/shared/auth";`                                                    |
+| `const auth = validateAgentApiKey(request);`                         | `const verify = await verifyAgentRequest(request);`                                                                    |
+| `if (!auth.valid) return signedUnauthorized();`                      | `if (!verify.ok) return signedUnauthorized(verify.reason);`                                                            |
+| `auth.profileUrl` → `buildUcpMeta(...)`                              | `verify.profileUrl` → `buildUcpMeta(...)`                                                                              |
+| `await request.json()` / `await request.text()`                      | `JSON.parse(verify.bodyText)` (body už byl konzumován middleware)                                                      |
+| Mutující route bez limit checku                                      | Před mutací: `await checkLimits(verify.agent, amountCents?, sessionId?)` → 429 pokud blocked                           |
+| Handler return                                                       | Obal celého handleru `withAgentActivityLog({ agent_id, action, scope, resource_id, amount_cents }, async () => {...})` |
 
 ### Routes v scope (12)
 
-| # | Route | Action label | Scope guard | Amount track |
-|---|-------|--------------|-------------|--------------|
-| 1 | `POST /api/ucp/rest/carts` | `cart.create` | `cart.create` | — |
-| 2 | `GET /api/ucp/rest/carts/[id]` | `cart.read` | `cart.create` | — |
-| 3 | `PATCH /api/ucp/rest/carts/[id]` | `cart.update` | `cart.update` | — |
-| 4 | `DELETE /api/ucp/rest/carts/[id]` | `cart.cancel` | `cart.update` | — |
-| 5 | `POST /api/ucp/rest/carts/[id]/lines` | `cart.add_line` | `cart.update` | cart total after add |
-| 6 | `PATCH /api/ucp/rest/carts/[id]/lines/[lineId]` | `cart.update_line` | `cart.update` | cart total after update |
-| 7 | `DELETE /api/ucp/rest/carts/[id]/lines/[lineId]` | `cart.remove_line` | `cart.update` | — |
-| 8 | `POST /api/ucp/rest/checkout-sessions` | `checkout.create` | `checkout.create` | — |
-| 9 | `GET/PATCH /api/ucp/rest/checkout-sessions/[id]` | `checkout.read`/`checkout.update` | `checkout.create` | — |
-| 10 | `POST /api/ucp/rest/checkout-sessions/[id]/complete` | `checkout.complete` | `checkout.complete` | **cart total → spending cap check** |
-| 11 | `POST /api/ucp/rest/checkout-sessions/[id]/cancel` | `checkout.cancel` | `checkout.create` | — |
-| 12 | `GET /api/ucp/rest/orders/[id]` | `order.read` | `order.read` | — |
+| #   | Route                                                | Action label                      | Scope guard         | Amount track                        |
+| --- | ---------------------------------------------------- | --------------------------------- | ------------------- | ----------------------------------- |
+| 1   | `POST /api/ucp/rest/carts`                           | `cart.create`                     | `cart.create`       | —                                   |
+| 2   | `GET /api/ucp/rest/carts/[id]`                       | `cart.read`                       | `cart.create`       | —                                   |
+| 3   | `PATCH /api/ucp/rest/carts/[id]`                     | `cart.update`                     | `cart.update`       | —                                   |
+| 4   | `DELETE /api/ucp/rest/carts/[id]`                    | `cart.cancel`                     | `cart.update`       | —                                   |
+| 5   | `POST /api/ucp/rest/carts/[id]/lines`                | `cart.add_line`                   | `cart.update`       | cart total after add                |
+| 6   | `PATCH /api/ucp/rest/carts/[id]/lines/[lineId]`      | `cart.update_line`                | `cart.update`       | cart total after update             |
+| 7   | `DELETE /api/ucp/rest/carts/[id]/lines/[lineId]`     | `cart.remove_line`                | `cart.update`       | —                                   |
+| 8   | `POST /api/ucp/rest/checkout-sessions`               | `checkout.create`                 | `checkout.create`   | —                                   |
+| 9   | `GET/PATCH /api/ucp/rest/checkout-sessions/[id]`     | `checkout.read`/`checkout.update` | `checkout.create`   | —                                   |
+| 10  | `POST /api/ucp/rest/checkout-sessions/[id]/complete` | `checkout.complete`               | `checkout.complete` | **cart total → spending cap check** |
+| 11  | `POST /api/ucp/rest/checkout-sessions/[id]/cancel`   | `checkout.cancel`                 | `checkout.create`   | —                                   |
+| 12  | `GET /api/ucp/rest/orders/[id]`                      | `order.read`                      | `order.read`        | —                                   |
 
 Plus: `GET /api/ucp/rest/approvals/[id]` (B6, čerstvě přidaný) zůstává s `validateAgentApiKey` — je to read-only polling endpoint, agent identity tady stačí v základním tvaru.
 
@@ -84,32 +89,32 @@ Jsem Jirka, provozuji **Algaweb** — českou webovou agenturu a managed hosting
 
 ### Lidské kanály (browser)
 
-| Kanál | Popis | Implementace |
-|-------|-------|-------------|
-| **Webový eshop** | Klasický storefront — katalog, košík, checkout, zákaznický účet | Next.js App Router, Server Components, ISR caching |
-| **Mobilní web** | Responzivní design, mobile-first, PWA-ready | Tailwind CSS, touch-optimized UI |
-| **Google Search** | Rich results v Google — ceny, dostupnost, hodnocení | 5 JSON-LD builderů (Product, BreadcrumbList, Organization, WebSite, CollectionPage) |
-| **Sociální sítě** | Náhledové karty při sdílení (Facebook, Twitter, LinkedIn) | OpenGraph + Twitter Card metadata na všech stránkách |
-| **SEO / Crawlery** | Kompletní indexace pro vyhledávače | robots.txt, sitemap.xml (dynamický), canonical URLs |
+| Kanál              | Popis                                                           | Implementace                                                                        |
+| ------------------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Webový eshop**   | Klasický storefront — katalog, košík, checkout, zákaznický účet | Next.js App Router, Server Components, ISR caching                                  |
+| **Mobilní web**    | Responzivní design, mobile-first, PWA-ready                     | Tailwind CSS, touch-optimized UI                                                    |
+| **Google Search**  | Rich results v Google — ceny, dostupnost, hodnocení             | 5 JSON-LD builderů (Product, BreadcrumbList, Organization, WebSite, CollectionPage) |
+| **Sociální sítě**  | Náhledové karty při sdílení (Facebook, Twitter, LinkedIn)       | OpenGraph + Twitter Card metadata na všech stránkách                                |
+| **SEO / Crawlery** | Kompletní indexace pro vyhledávače                              | robots.txt, sitemap.xml (dynamický), canonical URLs                                 |
 
 ### AI agentové kanály (programatické)
 
-| Kanál | Popis | Implementace |
-|-------|-------|-------------|
-| **ChatGPT (ACP)** | Zákazník řekne "kup mi tohle" → ChatGPT provede checkout a platbu | ACP product feed + checkout REST API + Stripe payment tokens |
+| Kanál                   | Popis                                                                 | Implementace                                                                     |
+| ----------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **ChatGPT (ACP)**       | Zákazník řekne "kup mi tohle" → ChatGPT provede checkout a platbu     | ACP product feed + checkout REST API + Stripe payment tokens                     |
 | **Google Gemini (UCP)** | Zákazník hledá v Google AI Mode → Gemini objeví eshop a dokončí nákup | `/.well-known/ucp` profil + REST checkout + MCP binding + capability negotiation |
-| **Libovolný MCP agent** | Jakýkoli MCP-kompatibilní agent (Claude, Cursor, custom boty) | 12 MCP tools (7 read-only + 5 checkout) |
-| **LLM crawlery** | Perplexity, SearchGPT a další AI vyhledávače rozumí eshopu | `/llms.txt` manifest s popisem obchodu a odkazy na data |
-| **Strojové feedy** | Cenové srovnávače, agregátory, partnerské systémy | `/api/products/feed.json` — kompletní produktový feed |
+| **Libovolný MCP agent** | Jakýkoli MCP-kompatibilní agent (Claude, Cursor, custom boty)         | 12 MCP tools (7 read-only + 5 checkout)                                          |
+| **LLM crawlery**        | Perplexity, SearchGPT a další AI vyhledávače rozumí eshopu            | `/llms.txt` manifest s popisem obchodu a odkazy na data                          |
+| **Strojové feedy**      | Cenové srovnávače, agregátory, partnerské systémy                     | `/api/products/feed.json` — kompletní produktový feed                            |
 
 ### Autentizační modely
 
-| Model | Použití | Implementace |
-|-------|---------|-------------|
-| **Guest checkout** | Zákazník bez účtu — browser i AI agent | Saleor anonymous checkout |
-| **Zákaznický účet** | Login, uložené adresy, historie objednávek | Saleor JWT auth + cookie session |
-| **OAuth2 (agent za zákazníka)** | AI agent propojí zákaznický účet → nakupuje s jeho daty | OAuth2 Authorization Code + PKCE, token rotation |
-| **API klíč (agent-level)** | Platformy (OpenAI, Google) se autentizují partnerským klíčem | Bearer token z AGENT_API_KEYS env var |
+| Model                           | Použití                                                      | Implementace                                     |
+| ------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| **Guest checkout**              | Zákazník bez účtu — browser i AI agent                       | Saleor anonymous checkout                        |
+| **Zákaznický účet**             | Login, uložené adresy, historie objednávek                   | Saleor JWT auth + cookie session                 |
+| **OAuth2 (agent za zákazníka)** | AI agent propojí zákaznický účet → nakupuje s jeho daty      | OAuth2 Authorization Code + PKCE, token rotation |
+| **API klíč (agent-level)**      | Platformy (OpenAI, Google) se autentizují partnerským klíčem | Bearer token z AGENT_API_KEYS env var            |
 
 ### Proč je to důležité
 
@@ -132,18 +137,18 @@ Budujeme platformu, kde klient spravuje celý svůj online byznys z **jednoho m�
 
 ### Source of Truth pravidla (NEPORUŠOVAT)
 
-| Data | Source of Truth | Důvod |
-|------|----------------|-------|
-| Produkty, varianty, ceny, sklad | **Saleor** | Commerce engine, kalkulace, validace |
-| Objednávky, checkout, platby | **Saleor** | Transakční integrita |
-| Zákazníci, košík | **Saleor** | Session management, auth |
-| Slevy, vouchery, promotion rules | **Saleor** | Business logika |
-| Blogy, stránky, landing pages | **Payload CMS** | Content management |
-| Navigační menu, bannery | **Payload CMS** | Vizuální obsah |
-| Média a obrázky (content) | **Payload CMS** | Asset management |
-| SEO metadata (content stránky) | **Payload CMS** | Content-driven SEO |
-| Product enrichment (delší popisy, tipy) | **Payload CMS** | Rozšířený obsah nad rámec Saleoru |
-| Klientský admin přístup | **Payload CMS** | Unified login, multi-tenant |
+| Data                                    | Source of Truth | Důvod                                |
+| --------------------------------------- | --------------- | ------------------------------------ |
+| Produkty, varianty, ceny, sklad         | **Saleor**      | Commerce engine, kalkulace, validace |
+| Objednávky, checkout, platby            | **Saleor**      | Transakční integrita                 |
+| Zákazníci, košík                        | **Saleor**      | Session management, auth             |
+| Slevy, vouchery, promotion rules        | **Saleor**      | Business logika                      |
+| Blogy, stránky, landing pages           | **Payload CMS** | Content management                   |
+| Navigační menu, bannery                 | **Payload CMS** | Vizuální obsah                       |
+| Média a obrázky (content)               | **Payload CMS** | Asset management                     |
+| SEO metadata (content stránky)          | **Payload CMS** | Content-driven SEO                   |
+| Product enrichment (delší popisy, tipy) | **Payload CMS** | Rozšířený obsah nad rámec Saleoru    |
+| Klientský admin přístup                 | **Payload CMS** | Unified login, multi-tenant          |
 
 ### Systémové schéma
 
@@ -183,12 +188,12 @@ Budujeme platformu, kde klient spravuje celý svůj online byznys z **jednoho m�
 
 ### Multi-tenancy model
 
-| Systém | Izolace | Mechanismus |
-|--------|---------|-------------|
-| **Saleor** | 1 channel = 1 klient | Permission groups s `restrictedAccessToChannels: true` |
-| **Payload** | 1 tenant = 1 klient | Oficiální `@payloadcms/plugin-multi-tenant` |
-| **Storefront** | 1 deployment = 1 klient | Paper fork s channel-scoped routing |
-| **AI Chat** | 1 OpenClaw instance = 1 klient | MCP servery scoped per tenant |
+| Systém         | Izolace                        | Mechanismus                                            |
+| -------------- | ------------------------------ | ------------------------------------------------------ |
+| **Saleor**     | 1 channel = 1 klient           | Permission groups s `restrictedAccessToChannels: true` |
+| **Payload**    | 1 tenant = 1 klient            | Oficiální `@payloadcms/plugin-multi-tenant`            |
+| **Storefront** | 1 deployment = 1 klient        | Paper fork s channel-scoped routing                    |
+| **AI Chat**    | 1 OpenClaw instance = 1 klient | MCP servery scoped per tenant                          |
 
 **PRAVIDLO:** Produkty v Saleoru VŽDY patří jen do jednoho channelu. Nikdy nesdílej produkty mezi klienty/channely.
 
@@ -196,20 +201,20 @@ Budujeme platformu, kde klient spravuje celý svůj online byznys z **jednoho m�
 
 ## Technologický stack (NEMĚNIT bez konzultace)
 
-| Vrstva | Technologie | Poznámka |
-|--------|------------|----------|
-| **Commerce engine** | Saleor (self-hosted) | GraphQL API, JEDINÝ source of truth pro commerce |
-| **CMS** | Payload CMS (self-hosted, PostgreSQL) | Multi-tenant, white-labeled admin panel |
-| **Storefront** | Next.js 16 + App Router (Paper template) | Server Components, React 19 |
-| **Jazyk** | TypeScript (strict mode) | Povinné, žádné `any` v produkci |
-| **Styling** | Tailwind CSS + CSS custom properties | Design tokeny v `src/styles/brand.css` |
-| **UI komponenty** | shadcn/ui + Paper e-commerce komponenty | shadcn jako primitiva |
-| **GraphQL** | GraphQL Codegen + TypedDocumentString | NEPOUŽÍVAT starý `@saleor/sdk` |
-| **Hosting frontend** | Cloudflare Pages nebo Vercel | Statické + edge rendering |
-| **Hosting backend** | Self-hosted (Cloudron/Docker) | Saleor + Payload na Algaweb infra |
-| **Platby** | Saleor payment apps (Stripe, Adyen) | Integrace přes checkout flow |
-| **AI Chat** | OpenClaw + MCP servery | Saleor MCP + Payload MCP + n8n MCP |
-| **Package manager** | pnpm | Vyžadován Paper templatem |
+| Vrstva               | Technologie                              | Poznámka                                         |
+| -------------------- | ---------------------------------------- | ------------------------------------------------ |
+| **Commerce engine**  | Saleor (self-hosted)                     | GraphQL API, JEDINÝ source of truth pro commerce |
+| **CMS**              | Payload CMS (self-hosted, PostgreSQL)    | Multi-tenant, white-labeled admin panel          |
+| **Storefront**       | Next.js 16 + App Router (Paper template) | Server Components, React 19                      |
+| **Jazyk**            | TypeScript (strict mode)                 | Povinné, žádné `any` v produkci                  |
+| **Styling**          | Tailwind CSS + CSS custom properties     | Design tokeny v `src/styles/brand.css`           |
+| **UI komponenty**    | shadcn/ui + Paper e-commerce komponenty  | shadcn jako primitiva                            |
+| **GraphQL**          | GraphQL Codegen + TypedDocumentString    | NEPOUŽÍVAT starý `@saleor/sdk`                   |
+| **Hosting frontend** | Cloudflare Pages nebo Vercel             | Statické + edge rendering                        |
+| **Hosting backend**  | Self-hosted (Cloudron/Docker)            | Saleor + Payload na Algaweb infra                |
+| **Platby**           | Saleor payment apps (Stripe, Adyen)      | Integrace přes checkout flow                     |
+| **AI Chat**          | OpenClaw + MCP servery                   | Saleor MCP + Payload MCP + n8n MCP               |
+| **Package manager**  | pnpm                                     | Vyžadován Paper templatem                        |
 
 ---
 
@@ -253,6 +258,7 @@ Klient edituje produkty, ceny, slevy přímo v Payload portálu. Implementace:
 ### Saleor → Payload synchronizace
 
 Saleor CMS App (oficiální) synchronizuje produkty jednosměrně ze Saleoru do Payloadu:
+
 - `PRODUCT_CREATED` → vytvoří záznam v Payload
 - `PRODUCT_UPDATED` → aktualizuje záznam
 - `PRODUCT_DELETED` → smaže záznam
@@ -293,6 +299,7 @@ Collections:
 Storefront má vestavěnou podporu pro Payload CMS. Stačí nastavit `PAYLOAD_API_URL` v `.env` a obsah se automaticky zobrazí. Bez Payloadu vše funguje jako dřív (graceful degradation).
 
 **Knihovna (`src/lib/payload/`):**
+
 - `client.ts` — REST API client s cachováním (1h content, 5min navigace) a graceful fallback
 - `types.ts` — TypeScript typy pro všechny Payload collections (Post, Page, ProductEnrichment, Navigation)
 - `queries.ts` — Query helpers: `getPublishedPosts()`, `getPostBySlug()`, `getPageBySlug()`, `getProductEnrichment()`, `getNavigation()`
@@ -309,6 +316,7 @@ Storefront má vestavěnou podporu pro Payload CMS. Stačí nastavit `PAYLOAD_AP
 Renderuje Payload 3.x Lexical editor output — headings, paragraphs, lists, links, images, code, blockquotes. Tailwind prose styling.
 
 **Env variables:**
+
 ```env
 PAYLOAD_API_URL=https://cms.example.com/api   # Payload REST API
 PAYLOAD_API_KEY=                                # Payload API key
@@ -374,17 +382,18 @@ Storefront fetchuje data z OBOU systémů paralelně:
 ```typescript
 // SPRÁVNĚ — paralelní fetch, nikdy waterfall
 const [product, enrichment] = await Promise.all([
-  saleorClient.query(ProductBySlugDocument, { slug }),
-  payloadClient.find({
-    collection: 'product-enrichment',
-    where: { saleorProductId: { equals: productId } }
-  })
+	saleorClient.query(ProductBySlugDocument, { slug }),
+	payloadClient.find({
+		collection: "product-enrichment",
+		where: { saleorProductId: { equals: productId } },
+	}),
 ]);
 ```
 
 **PRAVIDLO:** NIKDY nefetchuj Payload a Saleor sekvenčně. Vždy `Promise.all`.
 
 **Caching rozdíl:**
+
 - Saleor data: cached 5 min, revalidated přes webhooky
 - Payload content: cached agresivně (hodiny/dny), content se mění zřídka
 
@@ -427,22 +436,22 @@ Klient: "Napiš blogpost o jarní údržbě zahrady"
 
 ### MCP Server architektura
 
-| MCP Server | Systém | Operace |
-|-----------|--------|---------|
-| Saleor MCP | Saleor GraphQL API | Produkty, objednávky, zákazníci, slevy |
-| Payload MCP | Payload REST/GraphQL API | Blogy, stránky, média, enrichment |
-| n8n MCP | n8n workflows | Komplexní operace napříč systémy |
+| MCP Server  | Systém                   | Operace                                |
+| ----------- | ------------------------ | -------------------------------------- |
+| Saleor MCP  | Saleor GraphQL API       | Produkty, objednávky, zákazníci, slevy |
+| Payload MCP | Payload REST/GraphQL API | Blogy, stránky, média, enrichment      |
+| n8n MCP     | n8n workflows            | Komplexní operace napříč systémy       |
 
 **PRAVIDLO:** AI chat NIKDY nepřistupuje přímo k databázi. Vždy přes MCP servery s tenant-scoped API tokeny.
 
 ### Graduated autonomy pro AI
 
-| Úroveň | Akce | Příklad |
-|---------|------|---------|
-| Auto-execute | Read-only dotazy | "Kolik mám objednávek?" |
-| Execute + notify | Nízko-rizikové změny | "Změň popis produktu" |
-| Draft + approve | Střední riziko | "Vytvoř nový produkt za 450 Kč" |
-| Escalate | Vysoké riziko | "Smaž všechny produkty v kategorii" |
+| Úroveň           | Akce                 | Příklad                             |
+| ---------------- | -------------------- | ----------------------------------- |
+| Auto-execute     | Read-only dotazy     | "Kolik mám objednávek?"             |
+| Execute + notify | Nízko-rizikové změny | "Změň popis produktu"               |
+| Draft + approve  | Střední riziko       | "Vytvoř nový produkt za 450 Kč"     |
+| Escalate         | Vysoké riziko        | "Smaž všechny produkty v kategorii" |
 
 ---
 
@@ -451,6 +460,7 @@ Klient: "Napiš blogpost o jarní údržbě zahrady"
 ### 1. Branding storefrontu (VŽDY první krok u nového klienta)
 
 Edituj `src/styles/brand.css`:
+
 - Barvy (OKLCH color system, CSS custom properties)
 - Fonty
 - Spacing a border-radius
@@ -460,6 +470,7 @@ Edituj `src/styles/brand.css`:
 ### 2. České specifika (Algaweb přidaná hodnota)
 
 Toto Paper neřeší a musíme dodat:
+
 - **Česká fakturace** — IČ, DIČ pole v checkout/profilu
 - **Platební brány** — GoPay, Comgate (pokud klient nechce Stripe)
 - **Dopravci** — Zásilkovna (Packeta), PPL, Česká pošta, Balíkovna
@@ -510,6 +521,7 @@ Toto Paper neřeší a musíme dodat:
 ## Paper AI Skills
 
 Paper obsahuje **15 task-specific rules** v `skills/saleor-paper-storefront/rules/`:
+
 - GraphQL best practices
 - Data caching
 - Variant selection
@@ -640,6 +652,7 @@ npx create-payload-app@latest
 **Stav:** next-intl v4.8.3 je plně integrován do Next.js pipeline. Zbývá postupná migrace UI komponent na překlady.
 
 **Infrastruktura (✅ hotovo):**
+
 ```
 next.config.js              — createNextIntlPlugin wrapper
 src/i18n/config.ts          — Locale type ['cs', 'en'], default 'cs'
@@ -653,6 +666,7 @@ src/ui/components/locale-switcher.tsx — CZ/EN přepínač
 ```
 
 **Migrované komponenty (10+):**
+
 - `footer.tsx` — `getTranslations("footer")`
 - `nav/search-bar.tsx` — `getTranslations("search")`
 - `nav/mobile-menu.tsx` — `useTranslations("nav")`
@@ -666,6 +680,7 @@ src/ui/components/locale-switcher.tsx — CZ/EN přepínač
 - `locale-switcher.tsx` — `useLocale()`
 
 **Další migrované komponenty:**
+
 - `account/account-nav.tsx` — `useTranslations("nav")` (nav labels, back to store, sign out)
 - `account/change-password-form.tsx` — `useTranslations("account"/"auth"/"common")`
 - `account/page.tsx` — `getTranslations("account"/"common")` (welcome, orders, address)
@@ -674,17 +689,20 @@ src/ui/components/locale-switcher.tsx — CZ/EN přepínač
 - `cart/page.tsx` — `getTranslations("cart")` (empty state, totals)
 
 **Co zbývá (nižší priorita):**
+
 - [ ] PLP filter-bar (complex, lots of sort/filter labels)
 - [ ] Account: edit-name-form, delete-account-section
 - [ ] Product card labels (minimal text)
 
 **Pattern pro Server Components:**
+
 ```tsx
 import { getTranslations } from "next-intl/server";
 const t = await getTranslations("namespace");
 ```
 
 **Pattern pro Client Components:**
+
 ```tsx
 import { useTranslations } from "next-intl";
 const t = useTranslations("namespace");
@@ -755,6 +773,7 @@ src/lib/seo/index.ts         — Re-exporty builderů
 | `buildCollectionPageJsonLd()` | CollectionPage + ItemList | Připraveno pro kategorie, kolekce |
 
 **Pattern pro použití:**
+
 ```tsx
 import { buildProductJsonLd, jsonLdScriptProps } from "@/lib/seo";
 
@@ -797,6 +816,7 @@ src/app/mcp/route.ts      — HTTP endpoint (WebStandardStreamableHTTPServerTran
 **Závislosti:** `@modelcontextprotocol/sdk`, `zod`
 
 **Testování MCP:**
+
 ```bash
 # Inspect tools
 npx @modelcontextprotocol/inspector http://localhost:3000/mcp
@@ -810,6 +830,7 @@ curl -X POST http://localhost:3000/mcp \
 ### 5. brand.ts — branding konfigurace
 
 `src/config/brand.ts` obsahuje centrální branding:
+
 - `siteName`, `organizationName`, `defaultBrand` — názvy
 - `copyrightHolder` — pro copyright notice
 - `tagline`, `description` — meta popisky
@@ -818,6 +839,7 @@ curl -X POST http://localhost:3000/mcp \
 - `social.twitter`, `social.instagram`, `social.facebook` — sociální sítě (vše `null`)
 
 **SEO pole (✅ přidáno):**
+
 - `logoUrl` — cesta k logu, default `"/logo.svg"` (pro Organization JSON-LD)
 - `contactPhone` — telefon, default `null` (pro Organization JSON-LD + llms.txt)
 - `contactEmail` — email, default `null` (pro Organization JSON-LD + llms.txt)
@@ -847,13 +869,13 @@ PRD: `saleor-agent-first-prd.md`
 
 ### Stav implementace
 
-| Fáze | Stav | Popis |
-|------|------|-------|
-| Phase 1: Foundation | ✅ Hotovo | Shared utils, typy, UCP profil, ACP feed |
+| Fáze                         | Stav      | Popis                                      |
+| ---------------------------- | --------- | ------------------------------------------ |
+| Phase 1: Foundation          | ✅ Hotovo | Shared utils, typy, UCP profil, ACP feed   |
 | Phase 2: UCP checkout (REST) | ✅ Hotovo | create/get/update/complete/cancel checkout |
-| Phase 3: ACP checkout | ✅ Hotovo | ACP checkout + Stripe payment token |
-| Phase 4: MCP checkout tools | ✅ Hotovo | 5 authenticated MCP tools (12 total) |
-| Phase 5: Order management | ✅ Hotovo | Webhook handler, UCP/ACP order status |
+| Phase 3: ACP checkout        | ✅ Hotovo | ACP checkout + Stripe payment token        |
+| Phase 4: MCP checkout tools  | ✅ Hotovo | 5 authenticated MCP tools (12 total)       |
+| Phase 5: Order management    | ✅ Hotovo | Webhook handler, UCP/ACP order status      |
 
 ### Struktura kódu
 
@@ -874,22 +896,22 @@ src/lib/protocols/
 
 ### Endpointy
 
-| Endpoint | Protokol | Popis |
-|----------|----------|-------|
-| `GET /.well-known/ucp` | UCP | Business profile (discovery) |
-| `GET /api/acp/products/feed` | ACP | Product feed pro OpenAI |
-| `POST /api/ucp/rest/checkout-sessions` | UCP | Create checkout |
-| `GET/PATCH /api/ucp/rest/checkout-sessions/[id]` | UCP | Get/update checkout |
-| `POST .../[id]/complete` | UCP | Complete with payment |
-| `POST .../[id]/cancel` | UCP | Cancel checkout |
-| `POST /api/acp/checkout` | ACP | Create checkout session |
-| `GET/PATCH /api/acp/checkout/[id]` | ACP | Get/update session |
-| `POST /api/acp/checkout/[id]/complete` | ACP | Complete with Stripe token |
-| `GET /api/products/feed.json` | — | Existující feed (lidský formát) |
-| `GET /api/ucp/rest/orders/[id]` | UCP | Order status |
-| `GET /api/acp/orders/[id]` | ACP | Order status |
-| `POST /api/webhooks/saleor` | — | Saleor webhook handler (order events) |
-| `POST /mcp` | MCP | 12 tools (7 read-only + 5 checkout) |
+| Endpoint                                         | Protokol | Popis                                 |
+| ------------------------------------------------ | -------- | ------------------------------------- |
+| `GET /.well-known/ucp`                           | UCP      | Business profile (discovery)          |
+| `GET /api/acp/products/feed`                     | ACP      | Product feed pro OpenAI               |
+| `POST /api/ucp/rest/checkout-sessions`           | UCP      | Create checkout                       |
+| `GET/PATCH /api/ucp/rest/checkout-sessions/[id]` | UCP      | Get/update checkout                   |
+| `POST .../[id]/complete`                         | UCP      | Complete with payment                 |
+| `POST .../[id]/cancel`                           | UCP      | Cancel checkout                       |
+| `POST /api/acp/checkout`                         | ACP      | Create checkout session               |
+| `GET/PATCH /api/acp/checkout/[id]`               | ACP      | Get/update session                    |
+| `POST /api/acp/checkout/[id]/complete`           | ACP      | Complete with Stripe token            |
+| `GET /api/products/feed.json`                    | —        | Existující feed (lidský formát)       |
+| `GET /api/ucp/rest/orders/[id]`                  | UCP      | Order status                          |
+| `GET /api/acp/orders/[id]`                       | ACP      | Order status                          |
+| `POST /api/webhooks/saleor`                      | —        | Saleor webhook handler (order events) |
+| `POST /mcp`                                      | MCP      | 12 tools (7 read-only + 5 checkout)   |
 
 ### Env variables (protocols)
 
@@ -919,6 +941,7 @@ AI agenti (ChatGPT, Gemini) se autentizují zákazníkem přes OAuth2 Authorizat
 | `/oauth/revoke` | POST | Revokace refresh tokenu |
 
 **Knihovna (`src/lib/oauth/`):**
+
 - `config.ts` — Client registry z env, secret hash verification
 - `codes.ts` — Authorization code store (5min TTL, single-use)
 - `tokens.ts` — HMAC-SHA256 JWT signing/verification, token rotation
@@ -927,6 +950,7 @@ AI agenti (ChatGPT, Gemini) se autentizují zákazníkem přes OAuth2 Authorizat
 - `saleor-auth.ts` — Bridge: OAuth → Saleor tokenCreate
 
 **Env variables:**
+
 ```env
 OAUTH_JWT_SECRET=             # Min 32 znaků, pro podepisování JWT (POVINNÉ)
 OAUTH_CLIENTS=                # Registry: id:secret_hash:redirect_uri1|uri2
@@ -935,6 +959,7 @@ OAUTH_REFRESH_TOKEN_TTL=2592000  # Refresh token lifetime (default 30d)
 ```
 
 **Bezpečnost:**
+
 - PKCE S256 povinné (plain odmítnuto)
 - Authorization codes: single-use, 5min TTL, vázané na client+redirect_uri
 - Client secrets jako SHA-256 hash, timing-safe porovnání
@@ -982,32 +1007,35 @@ OAUTH_REFRESH_TOKEN_TTL=2592000  # Refresh token lifetime (default 30d)
 
 ### Caching strategie
 
-| Vrstva | Cache | Revalidace |
-|--------|-------|------------|
-| Product/category pages | ISR 5 min | Webhook + `cacheTag` |
-| Sitemap | `next.revalidate: 3600` | Automaticky po 1h |
-| Product feed | `Cache-Control: max-age=3600` | Automaticky po 1h |
-| llms.txt | `Cache-Control: max-age=86400` | Automaticky po 24h |
-| MCP tools | Žádný cache | Real-time |
-| Cart/checkout | `cache: "no-cache"` | Vždy live |
+| Vrstva                 | Cache                          | Revalidace           |
+| ---------------------- | ------------------------------ | -------------------- |
+| Product/category pages | ISR 5 min                      | Webhook + `cacheTag` |
+| Sitemap                | `next.revalidate: 3600`        | Automaticky po 1h    |
+| Product feed           | `Cache-Control: max-age=3600`  | Automaticky po 1h    |
+| llms.txt               | `Cache-Control: max-age=86400` | Automaticky po 24h   |
+| MCP tools              | Žádný cache                    | Real-time            |
+| Cart/checkout          | `cache: "no-cache"`            | Vždy live            |
 
 ### Branding — co vyplnit pro nového klienta
 
 V `src/config/brand.ts`:
+
 ```ts
-siteName, organizationName, defaultBrand  // Název obchodu
-tagline, description                      // Popisky
-logoUrl, contactPhone, contactEmail       // Pro structured data
-social.twitter, social.instagram, social.facebook  // Sociální sítě
-titleTemplate                             // "%s | Název Obchodu"
+siteName, organizationName, defaultBrand; // Název obchodu
+tagline, description; // Popisky
+logoUrl, contactPhone, contactEmail; // Pro structured data
+social.twitter, social.instagram, social.facebook; // Sociální sítě
+titleTemplate; // "%s | Název Obchodu"
 ```
 
 V `src/styles/brand.css`:
+
 ```css
 --color-primary, --color-secondary  // Barvy (OKLCH)
 ```
 
 V `.env`:
+
 ```
 NEXT_PUBLIC_SALEOR_API_URL         // Saleor GraphQL endpoint
 NEXT_PUBLIC_DEFAULT_CHANNEL        // Channel slug
@@ -1021,6 +1049,7 @@ NEXT_PUBLIC_STOREFRONT_URL         // Veřejná URL
 Toto je **šablona**. Při kopírování pro nového klienta postupuj podle tohoto checklistu:
 
 ### 1. Nastavení prostředí
+
 ```bash
 git clone <this-repo> client-storefront
 cd client-storefront
@@ -1028,6 +1057,7 @@ cp .env.example .env
 ```
 
 Vyplň `.env`:
+
 ```
 NEXT_PUBLIC_SALEOR_API_URL=https://klient.saleor.cloud/graphql/   # POVINNÉ
 NEXT_PUBLIC_DEFAULT_CHANNEL=cesky-kanal                            # POVINNÉ
@@ -1036,7 +1066,9 @@ SALEOR_APP_TOKEN=                                                  # Volitelné,
 ```
 
 ### 2. Branding
+
 Edituj `src/config/brand.ts` — vyplň VŠECHNA pole:
+
 - `siteName`, `organizationName`, `defaultBrand` — název obchodu
 - `copyrightHolder` — právní subjekt
 - `tagline`, `description` — meta popisky
@@ -1046,23 +1078,30 @@ Edituj `src/config/brand.ts` — vyplň VŠECHNA pole:
 - `titleTemplate` — `"%s | Název Obchodu"`
 
 ### 3. Vizuální identita
+
 Edituj `src/styles/brand.css`:
+
 - `--color-primary`, `--color-secondary` — barvy (OKLCH formát)
 - Fonty, border-radius, spacing
 
 ### 4. Logo a favicony
+
 Nahraď soubory v `public/`:
+
 - `logo.svg` (nebo jiný formát)
 - `favicon.ico`, `favicon-16x16.png`, `favicon-32x32.png`
 - `favicon-dark-16x16.png`, `favicon-dark-32x32.png` (tmavý režim)
 - `apple-icon.png`, `opengraph-image.png`
 
 ### 5. Locale konfigurace
+
 Zkontroluj `src/config/locale.ts`:
+
 - Pro český e-shop: `default: "cs-CZ"`, `graphqlLanguageCode: "CS_CZ"`
 - Pro anglický e-shop: `default: "en-US"`, `graphqlLanguageCode: "EN_US"`
 
 ### 6. Instalace a generování typů
+
 ```bash
 pnpm install
 pnpm run generate:all    # Generuje GraphQL typy ze Saleor API
@@ -1071,6 +1110,7 @@ pnpm run generate:all    # Generuje GraphQL typy ze Saleor API
 ⚠️ `generate:all` vyžaduje funkční `NEXT_PUBLIC_SALEOR_API_URL` v `.env`!
 
 ### 7. Ověření
+
 ```bash
 pnpm dev                  # Dev server — ověř homepage, produkty, checkout
 pnpm exec tsc --noEmit    # Type check
@@ -1078,5 +1118,6 @@ pnpm run build            # Produkční build
 ```
 
 ### 8. Deploy
+
 - **Cloudflare Pages**: Root `/`, build command `pnpm run build`, output `out` (s `NEXT_OUTPUT=export`) nebo `.next` (server mode)
 - **Vercel**: Automatická detekce Next.js, jen nastavit env variables
