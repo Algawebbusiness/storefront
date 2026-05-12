@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerAllAppResources } from "./apps";
 import { registerSearchTools } from "./tools/search";
 import { registerCategoryTools } from "./tools/categories";
 import { registerProductTools } from "./tools/products";
@@ -40,6 +41,11 @@ export function createMcpServer(): McpServer {
 	registerCollectionTools(server);
 	registerStoreInfoTools(server);
 	registerCheckoutTools(server);
+
+	// Phase F2: expose ui:// resources for MCP Apps-aware hosts. Tools
+	// reference them via `_meta.ui.resourceUri` in F4+; hosts without
+	// MCP Apps support simply ignore unknown resources.
+	registerAllAppResources(server);
 
 	return server;
 }

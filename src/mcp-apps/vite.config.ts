@@ -22,7 +22,23 @@ import { viteSingleFile } from "vite-plugin-singlefile";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * vite-plugin-singlefile only supports one entry per build (rollup forbids
+ * `inlineDynamicImports` with multi-input). `scripts/build-mcp-apps.mjs`
+ * therefore runs vite N times — once per view — passing the view name in
+ * the `MCP_APPS_VIEW` env var. This config picks it up and builds just
+ * that view into `dist/views/<name>.html`.
+ *
+ * Building each view independently also yields *true* isolation: a
+ * payload type change in one view can't accidentally bundle into another.
+ */
+
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
+
+const view = process.env.MCP_APPS_VIEW;
+if (!view) {
+	throw new Error("MCP_APPS_VIEW env var is required (e.g. 'product-card')");
+}
 
 export default defineConfig({
 	root: __dirname,
@@ -31,15 +47,18 @@ export default defineConfig({
 		jsx: "automatic",
 		jsxImportSource: "react",
 	},
+	resolve: {
+		alias: {
+			"@": resolve(__dirname, "../../src"),
+		},
+	},
 	build: {
 		outDir: "dist",
-		emptyOutDir: true,
-		assetsInlineLimit: 1_000_000, // inline everything
+		emptyOutDir: false, // build script clears once before the loop
+		assetsInlineLimit: 1_000_000,
 		cssCodeSplit: false,
 		rollupOptions: {
-			input: {
-				"product-card": resolve(__dirname, "views/product-card.html"),
-			},
+			input: resolve(__dirname, `views/${view}.html`),
 		},
 	},
 });
