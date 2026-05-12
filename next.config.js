@@ -34,6 +34,15 @@ const config = {
 	},
 	typedRoutes: false,
 
+	// Bundle the built MCP Apps single-file HTML views in the server output so
+	// runtimes (standalone, Cloudflare Pages, Vercel) can read them at request
+	// time from `src/mcp-apps/dist/`. Without this, the MCP server falls back
+	// to plain text responses on production.
+	outputFileTracingIncludes: {
+		"/mcp": ["./src/mcp-apps/dist/**/*"],
+		"/api/mcp/**": ["./src/mcp-apps/dist/**/*"],
+	},
+
 	// Used in the Dockerfile
 	output:
 		process.env.NEXT_OUTPUT === "standalone"

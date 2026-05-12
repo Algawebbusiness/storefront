@@ -4,6 +4,9 @@
 gql/
 src/checkout/graphql/generated/
 
+# MCP Apps bundled UI views (regenerate with `pnpm run build:mcp-apps`)
+src/mcp-apps/dist/
+
 .env
 
 # dependencies
