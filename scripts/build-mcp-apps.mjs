@@ -81,7 +81,15 @@ if (html.length === 0) {
 }
 
 console.log("\n[build-mcp-apps] bundle report:");
-const sizeBudgetKb = 250;
+const defaultBudgetKb = 250;
+const envBudget = process.env.MCP_APPS_BUNDLE_BUDGET_KB;
+const sizeBudgetKb = envBudget ? Number(envBudget) : defaultBudgetKb;
+if (Number.isNaN(sizeBudgetKb) || sizeBudgetKb <= 0) {
+	console.error(
+		`[build-mcp-apps] MCP_APPS_BUNDLE_BUDGET_KB="${envBudget}" is not a positive number; aborting`,
+	);
+	process.exit(2);
+}
 let overBudget = 0;
 for (const full of html) {
 	const rel = path.relative(distDir, full);
@@ -97,7 +105,15 @@ for (const full of html) {
 	);
 }
 
+// Phase F9: hard-enforce the gzipped budget. Override with
+// `MCP_APPS_BUNDLE_BUDGET_KB=<n>` if a legitimate need arises (escape
+// hatch documented in docs/mcp-apps-readme.md).
 if (overBudget > 0) {
-	console.warn(`[build-mcp-apps] ${overBudget} bundle(s) exceed ${sizeBudgetKb} KB gzipped budget`);
-	// non-fatal until F9 — dedicated test will enforce.
+	console.error(
+		`[build-mcp-apps] ${overBudget} bundle(s) exceed ${sizeBudgetKb} KB gzipped budget — failing the build`,
+	);
+	console.error(
+		`[build-mcp-apps] override via MCP_APPS_BUNDLE_BUDGET_KB=<higher> if intentional; otherwise reduce bundle size`,
+	);
+	process.exit(1);
 }

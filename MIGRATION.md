@@ -8,12 +8,12 @@
 
 The storefront ships **dual-mode** for **180 days** so existing deployments don't break:
 
-| Day | What changes | What you should do |
-|-----|--------------|-------------------|
-| 0 (today) | Both flows work. Legacy bearer logs `[auth] DEPRECATED ...` warning on every call. | Read this doc. |
-| 30 | Same as day 0. | Generate keys for your active agents. Test signed requests in staging. |
-| 90 | Deprecation log severity bumps from `console.warn` to `console.error` in dev mode. | Cut over production agents. |
-| 180 | `AGENT_API_KEYS` env var is **ignored**. Legacy bearer requests get 401. | Remove `AGENT_API_KEYS` from your `.env`. |
+| Day       | What changes                                                                       | What you should do                                                     |
+| --------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 0 (today) | Both flows work. Legacy bearer logs `[auth] DEPRECATED ...` warning on every call. | Read this doc.                                                         |
+| 30        | Same as day 0.                                                                     | Generate keys for your active agents. Test signed requests in staging. |
+| 90        | Deprecation log severity bumps from `console.warn` to `console.error` in dev mode. | Cut over production agents.                                            |
+| 180       | `AGENT_API_KEYS` env var is **ignored**. Legacy bearer requests get 401.           | Remove `AGENT_API_KEYS` from your `.env`.                              |
 
 The 180-day clock starts from **the day this storefront version is deployed to your environment**, not from when this file was committed.
 
@@ -119,3 +119,15 @@ After day 180:
 - **Q: What about the MCP transport?** MCP tools at `/mcp` use the same `verifyAgentRequest` middleware once they're migrated (currently still on the legacy path).
 - **Q: Can I keep AGENT_API_KEYS forever?** No — the Day 180 cutover is hard. The legacy code path will be deleted from the storefront codebase.
 - **Q: Where do I report bugs in this migration?** GitHub issues on the storefront repo, or email Algaweb directly.
+
+---
+
+## Note: Phase F (MCP Apps) does NOT require a migration
+
+The MCP Apps surface added in Phase F (May 2026) is purely additive — tools that previously returned plain JSON still return plain JSON to clients that don't understand `_meta.ui`. Specifically:
+
+- Older MCP clients that ignore unknown `_meta.*` fields keep working (JSON-RPC mandates that tolerance).
+- Hosts that _do_ understand MCP Apps render the tool result in a sandboxed iframe instead of a JSON dump — the underlying tool call response is unchanged.
+- The `wrapAsData(...)` BEGIN/END delimiter wrapping is also additive — it sits inside the existing `text` content block and parses fine as plain text.
+
+If a deployment ever needs to roll back the Apps surface (host crashes on an unknown `_meta` key, etc.), set `MCP_APPS_ENABLED=false` and restart. See [`docs/mcp-apps-spec-pinning.md`](./docs/mcp-apps-spec-pinning.md) §4 for the escape-hatch details. No migration steps required.

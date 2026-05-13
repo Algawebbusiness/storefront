@@ -92,11 +92,26 @@ src/
 │   │   └── ucp/            # UCP types + profile builder + capabilities
 │   ├── payload/            # Payload CMS client (REST API, graceful degradation)
 │   └── search/             # Search abstraction
-├── mcp-server/             # MCP server (12 tools: 7 read-only + 5 checkout)
+├── mcp-server/             # MCP server (12+ tools incl. 4 paired tools w/ _full PII siblings)
+│   └── apps/               # MCP Apps surface (Phase F): visual ui:// resources + paired-tool helpers
+├── mcp-apps/               # Iframe bundles served as ui:// resources (Vite single-file per view)
 ├── i18n/                   # next-intl config (cs/en)
 ├── messages/               # Translation files (cs.json, en.json)
 └── styles/brand.css        # Design tokens (CSS variables)
 ```
+
+---
+
+## MCP Apps — UI hint on tool calls
+
+MCP-Apps-aware hosts (Claude Desktop, VS Code Copilot, Goose, Postman, MCPJam) read `_meta.ui.resourceUri` on tool definitions and render the result inside a sandboxed iframe (`ui://saleor/*.html`). Eleven of the storefront's tools advertise a view today; calling them in such a host swaps the chat from JSON-dump to a real product carousel / cart preview / checkout summary / order receipt.
+
+- Public catalog tools (`search_products`, `get_category_products`, `get_product_detail`, `compare_products`) are model-visible by default.
+- Cart and post-pay tools (`get_cart`, `get_checkout`, `get_order`) ship as **paired** — model variant carries no PII; iframe pulls the `_full` sibling (`visibility: ["app"]`) for buyer email + addresses.
+- Mutating tools (`update_cart_line`, `update_checkout`, `complete_checkout`) are `visibility: ["app"]` — hidden from `tools/list`, callable only via iframe relay.
+- See [`docs/mcp-apps-readme.md`](docs/mcp-apps-readme.md) for the full developer guide and [`docs/mcp-apps-threat-model.md`](docs/mcp-apps-threat-model.md) for the data-class policy.
+
+Emergency rollback: set `MCP_APPS_ENABLED=false` and restart — strips `_meta.ui` from `tools/list` and skips paired `_full` siblings; tools keep functioning as plain JSON.
 
 ---
 

@@ -24,11 +24,12 @@
 import { registerAppResource, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { buildCsp } from "./csp";
-import { APP_RESOURCES, type AppResource } from "./registry";
+import { APP_RESOURCES, type AppResource, type AppResourceKey } from "./registry";
 import { loadThemedView } from "./serve-html";
+import { logAppView } from "./telemetry";
 
 export function registerAllAppResources(server: McpServer): void {
-	for (const resource of Object.values(APP_RESOURCES) as AppResource[]) {
+	for (const [key, resource] of Object.entries(APP_RESOURCES) as Array<[AppResourceKey, AppResource]>) {
 		registerAppResource(
 			server,
 			resource.name,
@@ -39,6 +40,10 @@ export function registerAllAppResources(server: McpServer): void {
 				_meta: { ui: { csp: buildCsp() } },
 			},
 			async (uri) => {
+				// Phase F9 telemetry — fire-and-forget log entry for adoption tracking.
+				// Per stateless `/mcp` route, agent identity isn't available here,
+				// so we log with `agentId: undefined` (→ "anonymous").
+				logAppView(key);
 				const text = await loadThemedView(resource.bundle);
 				return {
 					contents: [
