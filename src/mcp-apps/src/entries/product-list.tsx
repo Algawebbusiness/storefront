@@ -9,6 +9,7 @@
 
 import { createRoot } from "react-dom/client";
 import { createBridge } from "../bridge";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ProductList } from "../components/ProductList";
 import type { ProductListPayload } from "../types";
 import "../components/tokens.css";
@@ -23,7 +24,11 @@ if (rootEl) {
 	};
 
 	function render(state: ProductListPayload | null) {
-		root.render(<ProductList payload={state} onSelect={handleSelect} />);
+		root.render(
+			<ErrorBoundary view="product-list" sendUiMessage={bridge.sendUiMessage}>
+				<ProductList payload={state} onSelect={handleSelect} />
+			</ErrorBoundary>,
+		);
 	}
 
 	render(null);

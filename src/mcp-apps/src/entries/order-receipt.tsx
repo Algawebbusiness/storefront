@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createBridge } from "../bridge";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { OrderReceipt } from "../components/OrderReceipt";
 import type { OrderReceiptFullPayload, OrderReceiptPayload } from "../types";
 import "../components/tokens.css";
@@ -74,7 +75,11 @@ function OrderApp() {
 		void bridge.openLink(`/order/${orderId}`);
 	};
 
-	return <OrderReceipt payload={payload} fullPayload={fullPayload} onViewOrder={handleViewOrder} />;
+	return (
+		<ErrorBoundary view="order-receipt" sendUiMessage={bridge.sendUiMessage}>
+			<OrderReceipt payload={payload} fullPayload={fullPayload} onViewOrder={handleViewOrder} />
+		</ErrorBoundary>
+	);
 }
 
 const rootEl = document.getElementById("root");

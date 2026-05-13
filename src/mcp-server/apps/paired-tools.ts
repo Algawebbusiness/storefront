@@ -24,8 +24,9 @@
  * they call `registerAppTool` directly with `visibility: ["app"]`.
  */
 
-import { registerAppTool, type McpUiAppToolConfig } from "@modelcontextprotocol/ext-apps/server";
+import { type McpUiAppToolConfig } from "@modelcontextprotocol/ext-apps/server";
 import type { McpServer, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { mcpAppsEnabled, registerAppTool } from "./feature-flag";
 
 /**
  * Common subset of `registerAppTool` config — drops fields that are
@@ -74,7 +75,14 @@ export interface ToolPairConfig {
 
 export interface RegisteredToolPair {
 	model: RegisteredTool;
-	app: RegisteredTool;
+	/**
+	 * `null` only when `mcpAppsEnabled()` is `false` (Phase F8 feature
+	 * flag): without `_meta.ui.visibility = ["app"]` the `_full` sibling
+	 * would land in `tools/list` and leak PII, so the helper skips
+	 * registering it entirely. Callers don't reference this field today;
+	 * the type just makes the contract explicit.
+	 */
+	app: RegisteredTool | null;
 }
 
 /**
@@ -88,6 +96,11 @@ export interface RegisteredToolPair {
  *     `visibility: ["app"]` so it's omitted from `tools/list`.
  *
  * Any other `_meta` keys callers provide are passed through verbatim.
+ *
+ * When the Apps feature flag is OFF (Phase F8), the model tool still
+ * registers — minus its `_meta.ui` — and the `_full` sibling is skipped
+ * outright. That keeps `tools/list` clean and the PII-bearing handler
+ * permanently unreachable.
  */
 export function registerToolPair(
 	server: Pick<McpServer, "registerTool">,
@@ -101,6 +114,12 @@ export function registerToolPair(
 		},
 	} as McpUiAppToolConfig;
 
+	const modelHandle = registerAppTool(server, pair.model.name, modelConfig, pair.model.handler);
+
+	if (!mcpAppsEnabled()) {
+		return { model: modelHandle, app: null };
+	}
+
 	const appConfig = {
 		...pair.app.config,
 		_meta: {
@@ -109,7 +128,6 @@ export function registerToolPair(
 		},
 	} as McpUiAppToolConfig;
 
-	const modelHandle = registerAppTool(server, pair.model.name, modelConfig, pair.model.handler);
 	const appHandle = registerAppTool(server, pair.app.name, appConfig, pair.app.handler);
 
 	return { model: modelHandle, app: appHandle };

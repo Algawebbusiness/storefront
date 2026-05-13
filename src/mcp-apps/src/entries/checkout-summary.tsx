@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createBridge } from "../bridge";
 import { CheckoutSummary } from "../components/CheckoutSummary";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import type { CheckoutSummaryFullPayload, CheckoutSummaryPayload } from "../types";
 import "../components/tokens.css";
 
@@ -86,12 +87,14 @@ function CheckoutApp() {
 	};
 
 	return (
-		<CheckoutSummary
-			payload={payload}
-			fullPayload={fullPayload}
-			onSelectShipping={handleSelectShipping}
-			onConfirm={handleConfirm}
-		/>
+		<ErrorBoundary view="checkout-summary" sendUiMessage={bridge.sendUiMessage}>
+			<CheckoutSummary
+				payload={payload}
+				fullPayload={fullPayload}
+				onSelectShipping={handleSelectShipping}
+				onConfirm={handleConfirm}
+			/>
+		</ErrorBoundary>
 	);
 }
 

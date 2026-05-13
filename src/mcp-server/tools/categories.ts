@@ -1,4 +1,4 @@
-import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
+import { registerAppTool } from "../apps/feature-flag";
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { APP_RESOURCES } from "../apps/registry";

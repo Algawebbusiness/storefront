@@ -11,6 +11,7 @@
 
 import { createRoot } from "react-dom/client";
 import { createBridge } from "../bridge";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ProductCard } from "../components/ProductCard";
 import type { ProductCardPayload } from "../types";
 import "../components/tokens.css";
@@ -25,14 +26,16 @@ if (rootEl) {
 	};
 
 	function render(state: ProductCardPayload | null) {
-		if (state === null) {
-			root.render(<div className="pl-loading">Loading…</div>);
-			return;
-		}
 		root.render(
-			<div style={{ padding: "1rem" }}>
-				<ProductCard product={state} onSelect={handleSelect} />
-			</div>,
+			<ErrorBoundary view="product-card" sendUiMessage={bridge.sendUiMessage}>
+				{state === null ? (
+					<div className="pl-loading">Loading…</div>
+				) : (
+					<div style={{ padding: "1rem" }}>
+						<ProductCard product={state} onSelect={handleSelect} />
+					</div>
+				)}
+			</ErrorBoundary>,
 		);
 	}
 

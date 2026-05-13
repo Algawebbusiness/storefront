@@ -19,6 +19,7 @@
 
 import { createRoot } from "react-dom/client";
 import { createBridge } from "../bridge";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ProductDetail } from "../components/ProductDetail";
 import type { ProductDetailPayload } from "../types";
 import "../components/tokens.css";
@@ -40,7 +41,9 @@ if (rootEl) {
 
 	function render(state: ProductDetailPayload | null) {
 		root.render(
-			<ProductDetail payload={state} onAddToCart={handleAddToCart} onSelectCompare={handleSelectCompare} />,
+			<ErrorBoundary view="product-detail" sendUiMessage={bridge.sendUiMessage}>
+				<ProductDetail payload={state} onAddToCart={handleAddToCart} onSelectCompare={handleSelectCompare} />
+			</ErrorBoundary>,
 		);
 	}
 

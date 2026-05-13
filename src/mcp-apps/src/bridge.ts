@@ -61,14 +61,60 @@ export interface BridgeHandle<TPayload> {
 	app: App;
 }
 
+/**
+ * Handshake timeout for `ui/initialize` (Phase F8).
+ *
+ * Hosts that don't speak MCP Apps (older Inspector, plain JSON-RPC
+ * tools) never reply to `ui/initialize` — the App.connect() promise
+ * hangs forever. We race it against 5s; on timeout the iframe falls
+ * back to a `<pre>` JSON dump so the user sees diagnostics instead of
+ * a blank surface. Exported so unit tests can override it.
+ */
+export const HANDSHAKE_TIMEOUT_MS = 5000;
+
+function renderHandshakeFallback(name: string, error: unknown): void {
+	// Bypass React — the React tree may not have mounted yet, and the
+	// host clearly isn't talking to us. Pure DOM keeps the fallback
+	// path independent of bundle-level state.
+	if (typeof document === "undefined") return;
+	const body = document.body;
+	if (!body) return;
+	const dump = JSON.stringify(
+		{
+			view: name,
+			error: error instanceof Error ? error.message : String(error),
+			hint:
+				"MCP Apps host did not complete the ui/initialize handshake within " +
+				`${HANDSHAKE_TIMEOUT_MS}ms. The tool result is still available as text in the chat surface.`,
+		},
+		null,
+		2,
+	);
+	body.innerHTML = `<pre style="margin:0;padding:1rem;font-family:ui-monospace,monospace;font-size:0.8125rem;white-space:pre-wrap;">${dump.replace(
+		/</g,
+		"\\u003c",
+	)}</pre>`;
+}
+
 export function createBridge<TPayload = unknown>(name: string, version = "1.0.0"): BridgeHandle<TPayload> {
 	const app = new App({ name, version });
 
 	// connect() initiates the postMessage handshake (ui/initialize →
-	// ui/notifications/initialized). Fire-and-forget; the App class queues
-	// subsequent calls until the handshake settles. Handshake timeout +
-	// JSON dump fallback are wired up in F8.
-	void app.connect();
+	// ui/notifications/initialized). We race it against HANDSHAKE_TIMEOUT_MS
+	// (Phase F8) so hosts without MCP Apps support don't leave the iframe
+	// hanging — the catch handler renders a JSON dump fallback instead.
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeoutPromise = new Promise<never>((_, reject) => {
+		timer = setTimeout(
+			() => reject(new Error(`ui/initialize timeout after ${HANDSHAKE_TIMEOUT_MS}ms`)),
+			HANDSHAKE_TIMEOUT_MS,
+		);
+	});
+	void Promise.race([app.connect(), timeoutPromise])
+		.catch((error) => renderHandshakeFallback(name, error))
+		.finally(() => {
+			if (timer !== undefined) clearTimeout(timer);
+		});
 
 	return {
 		onResult: (handler) => {

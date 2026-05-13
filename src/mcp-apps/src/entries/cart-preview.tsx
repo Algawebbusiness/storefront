@@ -21,6 +21,7 @@ import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createBridge } from "../bridge";
 import { CartPreview } from "../components/CartPreview";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import type { CartPreviewPayload } from "../types";
 import "../components/tokens.css";
 
@@ -46,7 +47,11 @@ function CartApp() {
 		void bridge.sendUiMessage({ kind: "cart.proceed_to_checkout", cart_id: cartId });
 	};
 
-	return <CartPreview payload={payload} onQtyChange={handleQtyChange} onProceed={handleProceed} />;
+	return (
+		<ErrorBoundary view="cart-preview" sendUiMessage={bridge.sendUiMessage}>
+			<CartPreview payload={payload} onQtyChange={handleQtyChange} onProceed={handleProceed} />
+		</ErrorBoundary>
+	);
 }
 
 const rootEl = document.getElementById("root");
