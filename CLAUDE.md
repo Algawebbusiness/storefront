@@ -8,11 +8,12 @@
 > - **Fáze B (B1–B10): ✅ COMPLETE** — Agent identity & trust layer (registry + signed requests + activity log + per-agent caps + approval flow + OAuth identity binding + accepted_platforms publishing + 180-day migration timeline + abuse detection). 296/296 tests pass.
 > - **Fáze B route adoption: ✅ COMPLETE** — 12 UCP REST routes přepsány na `withUcpRoute()` (kombinuje `verifyAgentRequest` + `hasScope` + `checkLimits` + `withAgentActivityLog`). `POST /checkout-sessions/[id]/complete` enforcuje per-session spending cap _před_ Saleor mutací i Stripe nabitím. 315/315 tests pass (+19 nových).
 > - **Fáze C (C1–C10): ✅ COMPLETE** — Returns capability + Saleor refund wiring + webhook ORDER_REFUNDED + agent-webhook delivery (retry+sign) + eligibility framework + disclosure contracts + payment-handler registry + Stripe Link / stablecoin / MPP handlers + loyalty capability. 394/394 tests pass.
-> - **Fáze F (F1–F3): 🚧 IN PROGRESS** — MCP Apps infrastructure + security:
+> - **Fáze F (F1–F4): 🚧 IN PROGRESS** — MCP Apps infrastructure + security + first real views:
 >   - **F1 ✅** — Vite single-file build pipeline (`src/mcp-apps/`), `@modelcontextprotocol/ext-apps@1.7.1` dep + SDK bump na `^1.29`. 6 view bundles ~59 KB gzip každý.
 >   - **F2 ✅** — Resource server (`registerAllAppResources()`), CSP allowlist z env, tenant theme injection (`brand.css` + `window.__BRAND__`), klient bridge wrapping `App` třídu.
 >   - **F3 ✅** — Paired-tool PII isolation + prompt-injection defense. `data-policy.ts` (5-class FIELD_CLASSES + helpers), `paired-tools.ts` (`registerToolPair` ↔ `_full` app-only sibling), `sanitize.ts` (`sanitizeForLlm` 12 vektorů + `wrapAsData` delimiter), `ui-messages.ts` typed-enum + `bridge.ts` `sendUiMessage` + `fetchAppData`. Threat model `docs/mcp-apps-threat-model.md`. 455/455 tests pass.
->   - **F4–F9 čekají** — view components proti reálným Saleor datům, fallback, docs.
+>   - **F4 ✅** — Catalog tools wired to `ui://saleor/product-list.html`. `search_products` + `get_category_products` migrated to `registerAppTool` s `_meta.ui.resourceUri`; `get_collections` deferred (separate collection view později). No paired-tool — catalog je `public` třída. Tool responses zalité `wrapAsData(..., "product-list")`. React komponenty `ProductCard` + `ProductList` (responsive grid, var(--token) theming, no Tailwind). Bridge `onResult` automaticky unwrap-uje BEGIN/END delimiter před `JSON.parse`. Bundles gz: product-list 136.2 KB, product-card 136.0 KB. 468/468 tests pass.
+>   - **F5–F9 čekají** — product detail (paired? — TBD), cart (paired), checkout/order (paired), fallback, docs.
 > - **Fáze D: čeká.** Czech moat (Comgate, GoPay, Zásilkovna jako UCP fulfillment, ARES IČO/DIČ). D a F jsou nezávislé.
 >
 > Před implementační prací načti relevantní krok z `agentic-commerce-2026-plan.md`.
@@ -904,10 +905,9 @@ Pre-existing `/checkout` cacheComponents/Suspense bug pořád blokuje plný `nex
 - ✅ **F1** — Vite build pipeline, ext-apps@1.7.1 + SDK ^1.29.
 - ✅ **F2** — 6 ui:// resources registered, theme injection, CSP, bridge.
 - ✅ **F3** — Paired-tool helper, sanitize + wrapAsData, ui-messages typed-enum, threat model. 455/455 tests pass.
-- 🚧 **F4 (next)** — Catalog tools (search_products, get_category_products, get_collections) wire `_meta.ui.resourceUri` → `ui://saleor/product-list.html`. **Žádný paired-tool** (catalog je `public` třída). Postavit ProductCard + ProductList (embla-carousel) React komponenty v `src/mcp-apps/src/components/`. Aplikovat `sanitizeForLlm` na `product.description` + `wrapAsData` na celý JSON.stringify výsledek. Update entry souborů `entries/product-card.tsx` + `entries/product-list.tsx` z F2 stubu na real komponenty. Bundle target < 200 KB gzip. Nový test `__tests__/mcp-apps/apps-meta.test.ts` ověří `_meta.ui.resourceUri` na 3 catalog tools. Plný step-by-step viz F4 v plánu.
-- F5–F9 — product detail (paired? — TBD), cart (paired), checkout/order (paired), fallback, docs.
-
-**F4 deciation point:** `get_collections` vrací **kolekce**, ne produkty — jestli renderovat přes product-list view (sample products) nebo nechat pro F-později (samostatná collection view). Doporučení: pro F4 zaměřit jen na `search_products` + `get_category_products` (oba product-list view), `get_collections` zůstává jako plain JSON, doplníme v F-pozdější. Tím se F4 zúží na 2 tool updates místo 3.
+- ✅ **F4** — Catalog tools `search_products` + `get_category_products` wired to `ui://saleor/product-list.html` via `registerAppTool` + `_meta.ui.resourceUri`. `get_collections` scope-deferred (samostatná collection view F-později). No paired-tool (catalog `public` class). Tool responses wrapped by `wrapAsData(..., "product-list")`. ProductCard + ProductList React components (responsive CSS grid; embla skipped — sandbox compat, stays well under 200 KB gzip target). Entries replace F2 stub; click calls `get_product_detail({slug})`. `bridge.onResult` auto-unwraps BEGIN/END delimiter via new `unwrapAsData` helper so all F4+ views inherit the convention. 468/468 tests pass; commit 241bf665.
+- 🚧 **F5 (next)** — Product detail view (`get_product_detail`, `compare_products`). Reuses ProductCard from F4. Add ProductDetailPayload (media gallery, variant selector, attributes, description). Sanitize `product.description` via `sanitizeForLlm` before wrap. TBD: paired-tool — depends on whether B2B custom-tier pricing is included (`business-confidential` class).
+- F6–F9 — cart (paired), checkout/order (paired), fallback, docs.
 
 ### 5. brand.ts — branding konfigurace
 
