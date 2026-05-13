@@ -5,8 +5,12 @@
  * (since MCP transport has no HTTP headers).
  */
 
+import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { APP_RESOURCES } from "../apps/registry";
+import { mapCheckoutToCartPreview } from "../apps/cart-preview-mapper";
+import { wrapAsData } from "../apps/sanitize";
 import { saleorQuery, getDefaultChannel } from "../saleor-client";
 import {
 	CHECKOUT_CREATE_MUTATION,
@@ -29,8 +33,23 @@ import {
 import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
 import { processStripePayment } from "@/lib/protocols/shared/payment";
 
-/** Validate api_key against AGENT_API_KEYS env var */
-function validateApiKey(apiKey: string): boolean {
+/**
+ * Validate api_key against AGENT_API_KEYS env var.
+ *
+ * Returns `true` when:
+ *   - `AGENT_API_KEYS` is empty (development mode, auth disabled), OR
+ *   - the supplied `apiKey` appears in the env-configured set, OR
+ *   - `apiKey` is `undefined` and we trust upstream auth (Phase F6:
+ *     iframe-relayed `tools/call` arrives with agent identity already
+ *     verified on the HTTP transport layer, so this tool no longer
+ *     needs an explicit key in its args — see `cart-preview.ts` header).
+ *
+ * Only returns `false` when a non-matching key is *supplied*. That keeps
+ * the "no key passed = trust transport" door open for F-stack tools
+ * while still rejecting forged keys.
+ */
+function validateApiKey(apiKey: string | undefined): boolean {
+	if (apiKey === undefined) return true;
 	const keys = process.env.AGENT_API_KEYS || "";
 	const validKeys = new Set(
 		keys
@@ -38,12 +57,7 @@ function validateApiKey(apiKey: string): boolean {
 			.map((k) => k.trim())
 			.filter(Boolean),
 	);
-
-	// No keys configured = auth disabled (development mode)
-	if (validKeys.size === 0) {
-		return true;
-	}
-
+	if (validKeys.size === 0) return true;
 	return validKeys.has(apiKey);
 }
 
@@ -70,24 +84,47 @@ const addressSchema = z.object({
 
 export function registerCheckoutTools(server: McpServer) {
 	// ---------------------------------------------------------------
-	// create_checkout
+	// create_checkout — wired to ui://saleor/cart-preview.html (F6).
+	//
+	// Response is now `CartPreviewPayload` (model-visible only — no PII,
+	// per threat-model §2), wrapped by `wrapAsData(..., "cart-preview")`
+	// for indirect-prompt-injection defense. Agents that need the full
+	// protocol shape (`ProtocolCheckout` with addresses) should call the
+	// paired `get_cart_full` from `cart-preview.ts` via the iframe, or
+	// fall back to the UCP REST `/api/ucp/rest/checkout-sessions` route
+	// which still returns the full payload.
+	//
+	// `api_key` is optional: iframe-relayed callers omit it (host has
+	// preserved agent identity on the transport hop); HTTP-direct agents
+	// may still supply it for env-AGENT_API_KEYS validation.
 	// ---------------------------------------------------------------
-	server.tool(
+	registerAppTool(
+		server,
 		"create_checkout",
-		"Create a new checkout session with line items for AI agent purchasing. Requires api_key.",
 		{
-			api_key: z.string().describe("Agent API key for authentication"),
-			line_items: z
-				.array(
-					z.object({
-						variant_id: z.string().describe("Saleor product variant ID"),
-						quantity: z.number().int().positive(),
-					}),
-				)
-				.min(1)
-				.describe("Items to add to the checkout"),
-			email: z.string().email().optional().describe("Customer email"),
-			channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
+			title: "Create checkout",
+			description:
+				"Create a new checkout session with line items. Returns a cart-preview payload (lines, totals, status flags) — addresses/buyer surfaced only via the paired `get_cart_full` (app-only).",
+			inputSchema: {
+				api_key: z
+					.string()
+					.optional()
+					.describe("Optional agent API key. Iframe-relayed callers omit it; HTTP agents may still pass it."),
+				line_items: z
+					.array(
+						z.object({
+							variant_id: z.string().describe("Saleor product variant ID"),
+							quantity: z.number().int().positive(),
+						}),
+					)
+					.min(1)
+					.describe("Items to add to the checkout"),
+				email: z.string().email().optional().describe("Customer email"),
+				channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
+			},
+			_meta: {
+				ui: { resourceUri: APP_RESOURCES.cartPreview.uri },
+			},
 		},
 		async ({ api_key, line_items, email, channel }) => {
 			if (!validateApiKey(api_key)) {
@@ -127,21 +164,41 @@ export function registerCheckoutTools(server: McpServer) {
 				return { content: [{ type: "text" as const, text: "Error: No checkout returned" }] };
 			}
 
+			const payload = mapCheckoutToCartPreview(checkout);
 			return {
-				content: [{ type: "text" as const, text: JSON.stringify(mapCheckoutToProtocol(checkout), null, 2) }],
+				content: [
+					{
+						type: "text" as const,
+						text: wrapAsData(JSON.stringify(payload, null, 2), "cart-preview"),
+					},
+				],
 			};
 		},
 	);
 
 	// ---------------------------------------------------------------
-	// get_checkout
+	// get_checkout — wired to ui://saleor/cart-preview.html (F6).
+	// Same shape change as `create_checkout`: returns `CartPreviewPayload`,
+	// wrapped, no PII. Use the paired `get_cart_full` to retrieve the
+	// address-bearing payload from the iframe.
 	// ---------------------------------------------------------------
-	server.tool(
+	registerAppTool(
+		server,
 		"get_checkout",
-		"Get the current state of a checkout session. Requires api_key.",
 		{
-			api_key: z.string().describe("Agent API key for authentication"),
-			checkout_id: z.string().describe("Saleor checkout ID"),
+			title: "Get checkout",
+			description:
+				"Get the current cart-preview state of a checkout session. Returns lines, totals, and status flags (no buyer/address PII — use `get_cart_full` from the iframe for that).",
+			inputSchema: {
+				api_key: z
+					.string()
+					.optional()
+					.describe("Optional agent API key (iframe omits; HTTP agents may pass)."),
+				checkout_id: z.string().describe("Saleor checkout ID"),
+			},
+			_meta: {
+				ui: { resourceUri: APP_RESOURCES.cartPreview.uri },
+			},
 		},
 		async ({ api_key, checkout_id }) => {
 			if (!validateApiKey(api_key)) {
@@ -160,11 +217,12 @@ export function registerCheckoutTools(server: McpServer) {
 				return { content: [{ type: "text" as const, text: "Checkout not found" }] };
 			}
 
+			const payload = mapCheckoutToCartPreview(result.data.checkout);
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: JSON.stringify(mapCheckoutToProtocol(result.data.checkout), null, 2),
+						text: wrapAsData(JSON.stringify(payload, null, 2), "cart-preview"),
 					},
 				],
 			};

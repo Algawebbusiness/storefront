@@ -31,6 +31,13 @@ import { registerSearchTools } from "@/mcp-server/tools/search";
 import { registerCategoryTools } from "@/mcp-server/tools/categories";
 import { registerCollectionTools } from "@/mcp-server/tools/collections";
 import { registerProductTools } from "@/mcp-server/tools/products";
+import { registerCartPreviewTools } from "@/mcp-server/tools/cart-preview";
+import { registerCheckoutTools } from "@/mcp-server/tools/checkout";
+import {
+	mapCheckoutToCartPreview,
+	mapCheckoutToCartPreviewFull,
+} from "@/mcp-server/apps/cart-preview-mapper";
+import type { SaleorCheckout } from "@/lib/protocols/shared/checkout-queries";
 
 interface CapturedCall {
 	method: "tool" | "registerTool";
@@ -151,6 +158,169 @@ describe("F4 catalog tools — _meta.ui wiring", () => {
 
 		expect(calls.find((c) => c.name === "get_product_detail_full")).toBeUndefined();
 		expect(calls.find((c) => c.name === "compare_products_full")).toBeUndefined();
+	});
+
+	it("get_cart registers as a paired model tool (no visibility override)", () => {
+		const { server, calls } = createCapturingServer();
+		registerCartPreviewTools(server as never);
+
+		const entry = calls.find((c) => c.name === "get_cart");
+		expect(entry).toBeDefined();
+		expect(entry!.method).toBe("registerTool");
+		expect(entry!.config._meta?.ui?.resourceUri).toBe("ui://saleor/cart-preview.html");
+		// Model tool defaults to visibility ["model","app"] — the spec applies
+		// it implicitly, so the helper does NOT serialise an explicit field.
+		expect(entry!.config._meta?.ui?.visibility).toBeUndefined();
+	});
+
+	it("get_cart_full is the paired app sibling with visibility:['app'] (hidden from tools/list)", () => {
+		const { server, calls } = createCapturingServer();
+		registerCartPreviewTools(server as never);
+
+		const entry = calls.find((c) => c.name === "get_cart_full");
+		expect(entry).toBeDefined();
+		expect(entry!.method).toBe("registerTool");
+		expect(entry!.config._meta?.ui?.resourceUri).toBe("ui://saleor/cart-preview.html");
+		expect(entry!.config._meta?.ui?.visibility).toEqual(["app"]);
+	});
+
+	it("update_cart_line is a standalone app-only tool (visibility:['app'], not paired)", () => {
+		const { server, calls } = createCapturingServer();
+		registerCartPreviewTools(server as never);
+
+		const entry = calls.find((c) => c.name === "update_cart_line");
+		expect(entry).toBeDefined();
+		expect(entry!.method).toBe("registerTool");
+		expect(entry!.config._meta?.ui?.resourceUri).toBe("ui://saleor/cart-preview.html");
+		expect(entry!.config._meta?.ui?.visibility).toEqual(["app"]);
+		// And it has no `_full` sibling — it's not the paired pattern.
+		expect(calls.find((c) => c.name === "update_cart_line_full")).toBeUndefined();
+	});
+
+	it("create_checkout + get_checkout are wired to cart-preview view", () => {
+		const { server, calls } = createCapturingServer();
+		registerCheckoutTools(server as never);
+
+		const create = calls.find((c) => c.name === "create_checkout");
+		const get = calls.find((c) => c.name === "get_checkout");
+		expect(create).toBeDefined();
+		expect(get).toBeDefined();
+		expect(create!.config._meta?.ui?.resourceUri).toBe("ui://saleor/cart-preview.html");
+		expect(get!.config._meta?.ui?.resourceUri).toBe("ui://saleor/cart-preview.html");
+		// Default visibility (model + app) — explicit field absent
+		expect(create!.config._meta?.ui?.visibility).toBeUndefined();
+		expect(get!.config._meta?.ui?.visibility).toBeUndefined();
+	});
+});
+
+// ── Cart-preview data-policy enforcement (F6 §threat-model integration) ──
+
+function fixtureCheckout(overrides: Partial<SaleorCheckout> = {}): SaleorCheckout {
+	const base: SaleorCheckout = {
+		id: "ch_123",
+		email: "buyer@example.com",
+		channel: { id: "ch", slug: "default-channel" },
+		lines: [
+			{
+				id: "line_1",
+				quantity: 2,
+				totalPrice: { gross: { amount: 19.98, currency: "USD" } },
+				unitPrice: { gross: { amount: 9.99, currency: "USD" } },
+				variant: {
+					id: "var_1",
+					name: "Default",
+					sku: "SKU-1",
+					product: {
+						id: "prod_1",
+						name: "Cosmic Mug",
+						slug: "cosmic-mug",
+						thumbnail: { url: "https://cdn.example/p1.webp" },
+						media: [],
+						attributes: [],
+					},
+				},
+			},
+		],
+		totalPrice: {
+			gross: { amount: 24.98, currency: "USD" },
+			tax: { amount: 0, currency: "USD" },
+		},
+		subtotalPrice: { gross: { amount: 19.98, currency: "USD" } },
+		shippingPrice: { gross: { amount: 5, currency: "USD" } },
+		discount: null,
+		shippingAddress: {
+			firstName: "Alice",
+			lastName: "Doe",
+			companyName: "",
+			streetAddress1: "1 Test St",
+			streetAddress2: "",
+			city: "Prague",
+			cityArea: "",
+			postalCode: "11000",
+			country: { code: "CZ", country: "Czechia" },
+			countryArea: "",
+			phone: "+420600000000",
+		},
+		billingAddress: null,
+		deliveryMethod: { id: "ship_1", name: "Standard" },
+		shippingMethods: [],
+		isShippingRequired: true,
+		authorizeStatus: "NONE",
+		chargeStatus: "NONE",
+		metadata: [],
+	};
+	return { ...base, ...overrides };
+}
+
+describe("F6 cart-preview mapper — model vs full payload split (threat-model §2)", () => {
+	it("model payload omits buyer email + shipping/billing addresses", () => {
+		const out = mapCheckoutToCartPreview(fixtureCheckout());
+		const json = JSON.stringify(out);
+		// Buyer / PII fields must NOT appear anywhere in the model payload
+		expect(json).not.toContain("buyer@example.com");
+		expect(json).not.toContain("Alice");
+		expect(json).not.toContain("+420600000000");
+		expect(json).not.toContain("shipping_address");
+		expect(json).not.toContain("billing_address");
+		// But the boolean flags should communicate the same state
+		expect(out.hasEmail).toBe(true);
+		expect(out.hasShippingAddress).toBe(true);
+		expect(out.hasDeliveryMethod).toBe(true);
+	});
+
+	it("full payload exposes buyer + shipping_address + billing_address", () => {
+		const out = mapCheckoutToCartPreviewFull(fixtureCheckout());
+		expect(out.buyer.email).toBe("buyer@example.com");
+		expect(out.buyer.phone).toBe("+420600000000");
+		expect(out.buyer.firstName).toBe("Alice");
+		expect(out.shipping_address?.streetAddress1).toBe("1 Test St");
+		// billing left null in the fixture
+		expect(out.billing_address).toBeNull();
+		// Still inherits the model-visible flags
+		expect(out.hasEmail).toBe(true);
+		expect(out.hasShippingAddress).toBe(true);
+	});
+
+	it("hasEmail/hasShippingAddress flip when underlying values are null", () => {
+		const noPii = fixtureCheckout({ email: null, shippingAddress: null, deliveryMethod: null });
+		const out = mapCheckoutToCartPreview(noPii);
+		expect(out.hasEmail).toBe(false);
+		expect(out.hasShippingAddress).toBe(false);
+		expect(out.hasDeliveryMethod).toBe(false);
+	});
+
+	it("update_cart_line schema accepts only IDs + quantity (no PII fields)", () => {
+		const { server, calls } = createCapturingServer();
+		registerCartPreviewTools(server as never);
+		const entry = calls.find((c) => c.name === "update_cart_line")!;
+		const schema = entry.config.inputSchema as Record<string, unknown>;
+		const keys = Object.keys(schema);
+		// IDs + quantity + optional api_key only — no email/phone/address fields
+		expect(new Set(keys)).toEqual(new Set(["checkout_id", "line_id", "quantity", "api_key"]));
+		expect(keys).not.toContain("email");
+		expect(keys).not.toContain("shipping_address");
+		expect(keys).not.toContain("billing_address");
+		expect(keys).not.toContain("phone");
 	});
 });
 

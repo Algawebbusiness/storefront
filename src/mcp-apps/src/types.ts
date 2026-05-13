@@ -96,3 +96,83 @@ export interface ProductFull {
 export type ProductDetailPayload =
 	| { mode: "single"; product: ProductFull }
 	| { mode: "compare"; products: ProductFull[] };
+
+/**
+ * One cart line in the preview view. Prices are MAJOR units (USD 9.99,
+ * not 999 cents) because the iframe Intl.NumberFormat layer wants
+ * floating-point currency for display. Money on the wire between
+ * protocol REST routes still uses minor units (`UcpCartLine.unit_price`);
+ * this shape is iframe-only.
+ */
+export interface CartLineSummary {
+	id: string;
+	variantId: string;
+	productName: string;
+	variantName: string;
+	thumbnail: string | null;
+	quantity: number;
+	unitPrice: number;
+	lineTotal: number;
+}
+
+/** Buyer / address tuple visible only to the paired `_full` app tool. */
+export interface CartBuyerSummary {
+	email: string | null;
+	phone: string | null;
+	firstName: string | null;
+	lastName: string | null;
+}
+
+export interface CartAddressSummary {
+	firstName: string;
+	lastName: string;
+	companyName: string;
+	streetAddress1: string;
+	streetAddress2: string;
+	city: string;
+	cityArea: string;
+	postalCode: string;
+	country: string;
+	countryArea: string;
+	phone: string;
+}
+
+/**
+ * Model-visible cart preview payload — what `get_cart` (paired model)
+ * returns. Carries IDs, line metadata, totals (major units), and a few
+ * boolean flags that let the model gate the "Proceed to checkout" CTA
+ * without ever seeing the underlying address/email values (threat-model
+ * §2: `cart-state` class for the flags, `public` for everything else).
+ *
+ * NO buyer / address fields here. Those live on `CartPreviewFullPayload`
+ * only and are accessible exclusively from the iframe via
+ * `bridge.fetchAppData("get_cart", {checkout_id})`.
+ */
+export interface CartPreviewPayload {
+	id: string;
+	currency: string;
+	lines: CartLineSummary[];
+	totals: {
+		subtotal: number;
+		discount: number;
+		shipping: number;
+		tax: number;
+		total: number;
+	};
+	warnings?: { code: string; message: string; line_id?: string }[];
+	hasEmail: boolean;
+	hasShippingAddress: boolean;
+	hasDeliveryMethod: boolean;
+}
+
+/**
+ * App-only extension over `CartPreviewPayload`. Returned by
+ * `get_cart_full` (`visibility: ["app"]`, hidden from `tools/list`). The
+ * iframe pulls this to render filled-in address forms / confirmation
+ * details without the model ever seeing the raw PII.
+ */
+export interface CartPreviewFullPayload extends CartPreviewPayload {
+	buyer: CartBuyerSummary;
+	shipping_address: CartAddressSummary | null;
+	billing_address: CartAddressSummary | null;
+}
