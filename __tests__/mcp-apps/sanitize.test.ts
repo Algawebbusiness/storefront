@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { sanitizeAndWrap, sanitizeForLlm, wrapAsData } from "@/mcp-server/apps/sanitize";
+import { sanitizeAndWrap, sanitizeForLlm, unwrapAsData, wrapAsData } from "@/mcp-server/apps/sanitize";
 
 describe("sanitizeForLlm", () => {
 	it("returns empty for falsy / empty inputs", () => {
@@ -147,6 +147,34 @@ describe("wrapAsData", () => {
 		const out = wrapAsData(fake, "test");
 		expect(out.startsWith("=== BEGIN TEST")).toBe(true);
 		expect(out).toContain("LEAK"); // wrapped inside, doesn't escape
+	});
+});
+
+describe("unwrapAsData", () => {
+	it("returns the inner payload of a frame produced by wrapAsData", () => {
+		const wrapped = wrapAsData('{"hello":"world"}', "product-list");
+		expect(unwrapAsData(wrapped)).toBe('{"hello":"world"}');
+	});
+
+	it("round-trips an arbitrary kind label (uppercased + sanitised)", () => {
+		const wrapped = wrapAsData("payload", "cart.preview!");
+		// kind is normalised to uppercase A-Z0-9_- — the helper must match that
+		expect(unwrapAsData(wrapped)).toBe("payload");
+	});
+
+	it("returns null when the input is not a wrapped frame", () => {
+		expect(unwrapAsData("just some text")).toBeNull();
+		expect(unwrapAsData('{"unwrapped":true}')).toBeNull();
+	});
+
+	it("returns null when only BEGIN or only END is present (no half-frames)", () => {
+		expect(unwrapAsData("=== BEGIN X (info) ===\nbody")).toBeNull();
+		expect(unwrapAsData("body\n=== END X ===")).toBeNull();
+	});
+
+	it("requires the BEGIN and END labels to match", () => {
+		const malformed = "=== BEGIN A (note) ===\nbody\n=== END B ===";
+		expect(unwrapAsData(malformed)).toBeNull();
 	});
 });
 

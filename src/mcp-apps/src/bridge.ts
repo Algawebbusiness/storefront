@@ -25,6 +25,7 @@
  */
 
 import { App } from "@modelcontextprotocol/ext-apps";
+import { unwrapAsData } from "@/mcp-server/apps/sanitize";
 import { renderUiMessage, type UiMessage } from "./ui-messages";
 
 export interface BridgeHandle<TPayload> {
@@ -77,11 +78,14 @@ export function createBridge<TPayload = unknown>(name: string, version = "1.0.0"
 						typeof (c as { type?: unknown }).type === "string" && (c as { type: string }).type === "text",
 				) as { type: "text"; text: string } | undefined;
 				if (!textBlock) return;
+				// F4+ tool responses are wrapped by `wrapAsData` (BEGIN/END
+				// delimiter frame, per threat-model §3). Try unwrap first;
+				// fall back to raw text for any future view that opts out.
+				const inner = unwrapAsData(textBlock.text) ?? textBlock.text;
 				try {
-					handler(JSON.parse(textBlock.text) as TPayload);
+					handler(JSON.parse(inner) as TPayload);
 				} catch {
-					// Spec allows non-JSON text content; F4+ views will pick
-					// the parsing strategy that matches their payload shape.
+					// Non-JSON content — view-level error handling lives in F8.
 				}
 			};
 		},

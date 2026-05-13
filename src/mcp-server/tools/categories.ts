@@ -1,6 +1,10 @@
+import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { APP_RESOURCES } from "../apps/registry";
+import { wrapAsData } from "../apps/sanitize";
 import { saleorQuery, getDefaultChannel } from "../saleor-client";
+import type { ProductCardPayload, ProductListPayload } from "@/mcp-apps/src/types";
 
 const ALL_CATEGORIES_QUERY = `
 	query MCPAllCategories($first: Int!, $channel: String!) {
@@ -41,16 +45,6 @@ const CATEGORY_PRODUCTS_QUERY = `
 							}
 						}
 						thumbnail(size: 512, format: WEBP) { url alt }
-						variants {
-							id
-							name
-							quantityAvailable
-							pricing { price { gross { amount currency } } }
-							attributes {
-								attribute { slug name }
-								values { name }
-							}
-						}
 					}
 				}
 			}
@@ -100,13 +94,20 @@ export function registerCategoryTools(server: McpServer) {
 		},
 	);
 
-	server.tool(
+	registerAppTool(
+		server,
 		"get_category_products",
-		"Get products in a specific category.",
 		{
-			categorySlug: z.string().describe("Category URL slug"),
-			first: z.number().min(1).max(50).default(10).describe("Number of results"),
-			channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
+			title: "Get category products",
+			description: "Get products in a specific category.",
+			inputSchema: {
+				categorySlug: z.string().describe("Category URL slug"),
+				first: z.number().min(1).max(50).default(10).describe("Number of results"),
+				channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
+			},
+			_meta: {
+				ui: { resourceUri: APP_RESOURCES.productList.uri },
+			},
 		},
 		async ({ categorySlug, first, channel }) => {
 			const result = await saleorQuery(CATEGORY_PRODUCTS_QUERY, {
@@ -148,31 +149,34 @@ export function registerCategoryTools(server: McpServer) {
 				return { content: [{ type: "text" as const, text: "Category not found" }] };
 			}
 
-			const products = data.category.products.edges.map((e) => ({
-				name: e.node.name,
-				slug: e.node.slug,
-				inStock: e.node.isAvailable,
-				price: {
-					currency: e.node.pricing?.priceRange?.start?.gross?.currency ?? null,
-					min: e.node.pricing?.priceRange?.start?.gross?.amount ?? null,
-					max: e.node.pricing?.priceRange?.stop?.gross?.amount ?? null,
-				},
-				thumbnail: e.node.thumbnail?.url ?? null,
-			}));
+			const categoryName = data.category.name;
+			const products: ProductCardPayload[] = data.category.products.edges.map((e) => {
+				const min = e.node.pricing?.priceRange?.start?.gross?.amount ?? 0;
+				const max = e.node.pricing?.priceRange?.stop?.gross?.amount ?? min;
+				return {
+					name: e.node.name,
+					slug: e.node.slug,
+					category: categoryName,
+					inStock: e.node.isAvailable,
+					price: {
+						currency: e.node.pricing?.priceRange?.start?.gross?.currency ?? "",
+						min,
+						max: max === min ? null : max,
+					},
+					thumbnail: e.node.thumbnail?.url ?? null,
+				};
+			});
+
+			const payload: ProductListPayload = {
+				totalCount: data.category.products.totalCount,
+				products,
+			};
 
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: JSON.stringify(
-							{
-								category: data.category.name,
-								totalCount: data.category.products.totalCount,
-								products,
-							},
-							null,
-							2,
-						),
+						text: wrapAsData(JSON.stringify(payload, null, 2), "product-list"),
 					},
 				],
 			};

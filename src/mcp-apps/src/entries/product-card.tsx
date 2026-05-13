@@ -1,11 +1,41 @@
 /**
- * F1/F2 stub entry — pipeline smoke test. Real product card rendering
- * lands in F4 against live Saleor data.
+ * `ui://saleor/product-card.html` entry (Phase F4).
+ *
+ * No catalog tool is wired to this URI in F4 — `search_products` and
+ * `get_category_products` both render through `product-list.html`. The
+ * single-card view exists so F5+ tools (e.g. a future "feature this one
+ * product" affordance) can mount the same `ProductCard` component with
+ * a `ProductCardPayload`. Tool result handling, theming, and the bridge
+ * shape stay identical to `product-list`.
  */
 
-import { mountStub } from "./stub";
+import { createRoot } from "react-dom/client";
+import { createBridge } from "../bridge";
+import { ProductCard } from "../components/ProductCard";
+import type { ProductCardPayload } from "../types";
+import "../components/tokens.css";
 
-mountStub({
-	label: "MCP Apps product card",
-	hint: "The bundle pipeline + theme injection works. Real product rendering arrives in F4.",
-});
+const bridge = createBridge<ProductCardPayload>("saleor-product-card");
+const rootEl = document.getElementById("root");
+if (rootEl) {
+	const root = createRoot(rootEl);
+
+	const handleSelect = (slug: string) => {
+		void bridge.callTool("get_product_detail", { slug });
+	};
+
+	function render(state: ProductCardPayload | null) {
+		if (state === null) {
+			root.render(<div className="pl-loading">Loading…</div>);
+			return;
+		}
+		root.render(
+			<div style={{ padding: "1rem" }}>
+				<ProductCard product={state} onSelect={handleSelect} />
+			</div>,
+		);
+	}
+
+	render(null);
+	bridge.onResult(render);
+}

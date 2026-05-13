@@ -1,6 +1,10 @@
+import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { APP_RESOURCES } from "../apps/registry";
+import { wrapAsData } from "../apps/sanitize";
 import { saleorQuery, getDefaultChannel } from "../saleor-client";
+import type { ProductCardPayload, ProductListPayload } from "@/mcp-apps/src/types";
 
 const SEARCH_QUERY = `
 	query MCPSearchProducts($search: String!, $first: Int!, $channel: String!) {
@@ -24,11 +28,6 @@ const SEARCH_QUERY = `
 						}
 					}
 					thumbnail(size: 512, format: WEBP) { url alt }
-					variants {
-						id
-						name
-						quantityAvailable
-					}
 				}
 			}
 		}
@@ -36,13 +35,21 @@ const SEARCH_QUERY = `
 `;
 
 export function registerSearchTools(server: McpServer) {
-	server.tool(
+	registerAppTool(
+		server,
 		"search_products",
-		"Search for products by text query. Returns product names, prices, availability, and URLs.",
 		{
-			query: z.string().describe("Search query text"),
-			first: z.number().min(1).max(50).default(10).describe("Number of results (default 10, max 50)"),
-			channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
+			title: "Search products",
+			description:
+				"Search for products by text query. Returns product names, prices, availability, and URLs.",
+			inputSchema: {
+				query: z.string().describe("Search query text"),
+				first: z.number().min(1).max(50).default(10).describe("Number of results (default 10, max 50)"),
+				channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
+			},
+			_meta: {
+				ui: { resourceUri: APP_RESOURCES.productList.uri },
+			},
 		},
 		async ({ query, first, channel }) => {
 			const result = await saleorQuery(SEARCH_QUERY, {
@@ -72,31 +79,38 @@ export function registerSearchTools(server: McpServer) {
 								};
 							} | null;
 							thumbnail: { url: string; alt: string | null } | null;
-							variants: Array<{ id: string; name: string; quantityAvailable: number | null }>;
 						};
 					}>;
 				};
 			};
 
-			const products = data.products.edges.map((e) => ({
-				name: e.node.name,
-				slug: e.node.slug,
-				category: e.node.category?.name ?? null,
-				inStock: e.node.isAvailable,
-				price: {
-					currency: e.node.pricing?.priceRange?.start?.gross?.currency ?? null,
-					min: e.node.pricing?.priceRange?.start?.gross?.amount ?? null,
-					max: e.node.pricing?.priceRange?.stop?.gross?.amount ?? null,
-				},
-				thumbnail: e.node.thumbnail?.url ?? null,
-				variantCount: e.node.variants.length,
-			}));
+			const products: ProductCardPayload[] = data.products.edges.map((e) => {
+				const min = e.node.pricing?.priceRange?.start?.gross?.amount ?? 0;
+				const max = e.node.pricing?.priceRange?.stop?.gross?.amount ?? min;
+				return {
+					name: e.node.name,
+					slug: e.node.slug,
+					category: e.node.category?.name ?? null,
+					inStock: e.node.isAvailable,
+					price: {
+						currency: e.node.pricing?.priceRange?.start?.gross?.currency ?? "",
+						min,
+						max: max === min ? null : max,
+					},
+					thumbnail: e.node.thumbnail?.url ?? null,
+				};
+			});
+
+			const payload: ProductListPayload = {
+				totalCount: data.products.totalCount,
+				products,
+			};
 
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: JSON.stringify({ totalCount: data.products.totalCount, products }, null, 2),
+						text: wrapAsData(JSON.stringify(payload, null, 2), "product-list"),
 					},
 				],
 			};

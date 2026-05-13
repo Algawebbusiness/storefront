@@ -153,3 +153,20 @@ export function wrapAsData(text: string, kind = "tool-result"): string {
 export function sanitizeAndWrap(text: string, kind = "user-content"): string {
 	return wrapAsData(sanitizeForLlm(text), kind);
 }
+
+/**
+ * Inverse of `wrapAsData`: strip the BEGIN/END frame and return the inner
+ * payload. Returns `null` when `text` is not a recognised wrapped frame —
+ * callers fall back to treating the input as raw content.
+ *
+ * The iframe bridge uses this to recover the original JSON payload from
+ * a delimiter-wrapped `tools/call` result before `JSON.parse`. The pattern
+ * deliberately matches what `wrapAsData` writes, including the parenthesised
+ * "untrusted third-party data..." annotation.
+ */
+const UNWRAP_PATTERN = /^=== BEGIN ([A-Z0-9_-]+) \([^)]*\) ===\n([\s\S]+)\n=== END \1 ===$/;
+
+export function unwrapAsData(text: string): string | null {
+	const match = text.match(UNWRAP_PATTERN);
+	return match ? match[2] ?? null : null;
+}
