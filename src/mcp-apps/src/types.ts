@@ -176,3 +176,97 @@ export interface CartPreviewFullPayload extends CartPreviewPayload {
 	shipping_address: CartAddressSummary | null;
 	billing_address: CartAddressSummary | null;
 }
+
+/** One shipping method option in the picker (no PII). */
+export interface ShippingMethodOption {
+	id: string;
+	name: string;
+	price: number;
+	minDeliveryDays: number | null;
+	maxDeliveryDays: number | null;
+}
+
+/**
+ * Model-visible checkout summary payload (Phase F7).
+ *
+ * Pre-pay review surface: same `lines` + `totals` shape as the cart
+ * preview, plus selected delivery method (display only — `cart-state`
+ * class) and the picker's `availableShippingMethods` list (public). No
+ * buyer / address fields here — those live on `CheckoutSummaryFullPayload`.
+ *
+ * The plan F7 allow-list caps the model-visible payload at ≤ 8 fields
+ * to keep the snapshot diff cheap; counted by stable top-level keys.
+ */
+export interface CheckoutSummaryPayload {
+	id: string;
+	currency: string;
+	lines: CartLineSummary[];
+	totals: {
+		subtotal: number;
+		discount: number;
+		shipping: number;
+		tax: number;
+		total: number;
+	};
+	selectedDeliveryMethod: { id: string; name: string } | null;
+	availableShippingMethods: ShippingMethodOption[];
+	warnings?: { code: string; message: string; line_id?: string }[];
+	hasEmail: boolean;
+	hasShippingAddress: boolean;
+	hasDeliveryMethod: boolean;
+}
+
+/** App-only extension carrying buyer + addresses (paired `_full` only). */
+export interface CheckoutSummaryFullPayload extends CheckoutSummaryPayload {
+	buyer: CartBuyerSummary;
+	shipping_address: CartAddressSummary | null;
+	billing_address: CartAddressSummary | null;
+}
+
+/**
+ * Single order line shown only in the paired `_full` order receipt
+ * payload. Product names + variant names are `public` per data-policy,
+ * but we keep them out of the model-visible shape so the snapshot diff
+ * stays small (≤ 6 fields per the F7 acceptance allow-list).
+ */
+export interface OrderLineSummary {
+	id: string;
+	productName: string;
+	variantName: string;
+	thumbnail: string | null;
+	quantity: number;
+	unitPrice: number;
+	lineTotal: number;
+}
+
+/**
+ * Model-visible order receipt — six fields, all `public` or `cart-state`
+ * per `data-policy.ts`. The model can confirm "order N is paid /
+ * fulfilled" without seeing line items, totals breakdown, or addresses.
+ */
+export interface OrderReceiptPayload {
+	id: string;
+	number: string;
+	status: string;
+	statusDisplay: string;
+	currency: string;
+	total: number;
+	isPaid: boolean;
+}
+
+/** App-only — full lines + totals + addresses + buyer email. */
+export interface OrderReceiptFullPayload extends OrderReceiptPayload {
+	created: string;
+	deliveryMethod: string | null;
+	lines: OrderLineSummary[];
+	totals: {
+		subtotal: number;
+		discount: number;
+		shipping: number;
+		tax: number;
+		total: number;
+	};
+	buyer: { email: string | null };
+	shipping_address: CartAddressSummary | null;
+	billing_address: CartAddressSummary | null;
+}

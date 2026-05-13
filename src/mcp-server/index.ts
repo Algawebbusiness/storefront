@@ -7,6 +7,8 @@ import { registerCollectionTools } from "./tools/collections";
 import { registerStoreInfoTools } from "./tools/store-info";
 import { registerCheckoutTools } from "./tools/checkout";
 import { registerCartPreviewTools } from "./tools/cart-preview";
+import { registerCheckoutSummaryTools } from "./tools/checkout-summary";
+import { registerOrderReceiptTools } from "./tools/order-receipt";
 
 /**
  * MCP server for the Saleor storefront.
@@ -43,6 +45,8 @@ export function createMcpServer(): McpServer {
 	registerStoreInfoTools(server);
 	registerCheckoutTools(server);
 	registerCartPreviewTools(server);
+	registerCheckoutSummaryTools(server);
+	registerOrderReceiptTools(server);
 
 	// Phase F2: expose ui:// resources for MCP Apps-aware hosts. Tools
 	// reference them via `_meta.ui.resourceUri` in F4+; hosts without

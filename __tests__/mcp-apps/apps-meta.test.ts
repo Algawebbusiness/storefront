@@ -33,11 +33,19 @@ import { registerCollectionTools } from "@/mcp-server/tools/collections";
 import { registerProductTools } from "@/mcp-server/tools/products";
 import { registerCartPreviewTools } from "@/mcp-server/tools/cart-preview";
 import { registerCheckoutTools } from "@/mcp-server/tools/checkout";
+import { registerCheckoutSummaryTools } from "@/mcp-server/tools/checkout-summary";
+import { registerOrderReceiptTools } from "@/mcp-server/tools/order-receipt";
 import {
 	mapCheckoutToCartPreview,
 	mapCheckoutToCartPreviewFull,
 } from "@/mcp-server/apps/cart-preview-mapper";
+import {
+	mapCheckoutToCheckoutSummary,
+	mapCheckoutToCheckoutSummaryFull,
+} from "@/mcp-server/apps/checkout-summary-mapper";
+import { mapOrderToOrderReceipt, mapOrderToOrderReceiptFull } from "@/mcp-server/apps/order-receipt-mapper";
 import type { SaleorCheckout } from "@/lib/protocols/shared/checkout-queries";
+import type { SaleorOrder } from "@/lib/protocols/shared/order-queries";
 
 interface CapturedCall {
 	method: "tool" | "registerTool";
@@ -197,19 +205,17 @@ describe("F4 catalog tools — _meta.ui wiring", () => {
 		expect(calls.find((c) => c.name === "update_cart_line_full")).toBeUndefined();
 	});
 
-	it("create_checkout + get_checkout are wired to cart-preview view", () => {
+	it("create_checkout is wired to cart-preview view (model-visible default)", () => {
 		const { server, calls } = createCapturingServer();
 		registerCheckoutTools(server as never);
 
 		const create = calls.find((c) => c.name === "create_checkout");
-		const get = calls.find((c) => c.name === "get_checkout");
 		expect(create).toBeDefined();
-		expect(get).toBeDefined();
 		expect(create!.config._meta?.ui?.resourceUri).toBe("ui://saleor/cart-preview.html");
-		expect(get!.config._meta?.ui?.resourceUri).toBe("ui://saleor/cart-preview.html");
-		// Default visibility (model + app) — explicit field absent
 		expect(create!.config._meta?.ui?.visibility).toBeUndefined();
-		expect(get!.config._meta?.ui?.visibility).toBeUndefined();
+		// F7 moved get_checkout to tools/checkout-summary.ts as a paired tool;
+		// the legacy registration in checkout.ts is gone.
+		expect(calls.find((c) => c.name === "get_checkout")).toBeUndefined();
 	});
 });
 
@@ -321,6 +327,185 @@ describe("F6 cart-preview mapper — model vs full payload split (threat-model �
 		expect(keys).not.toContain("shipping_address");
 		expect(keys).not.toContain("billing_address");
 		expect(keys).not.toContain("phone");
+	});
+});
+
+// ─── F7 wiring tests ────────────────────────────────────────────────
+
+describe("F7 checkout summary + order receipt — paired + app-only mutators", () => {
+	it("get_checkout is paired (model default, full visibility:['app'])", () => {
+		const { server, calls } = createCapturingServer();
+		registerCheckoutSummaryTools(server as never);
+
+		const model = calls.find((c) => c.name === "get_checkout");
+		const full = calls.find((c) => c.name === "get_checkout_full");
+		expect(model).toBeDefined();
+		expect(full).toBeDefined();
+		expect(model!.config._meta?.ui?.resourceUri).toBe("ui://saleor/checkout-summary.html");
+		expect(full!.config._meta?.ui?.resourceUri).toBe("ui://saleor/checkout-summary.html");
+		expect(model!.config._meta?.ui?.visibility).toBeUndefined();
+		expect(full!.config._meta?.ui?.visibility).toEqual(["app"]);
+	});
+
+	it("get_order is paired (model default, full visibility:['app'])", () => {
+		const { server, calls } = createCapturingServer();
+		registerOrderReceiptTools(server as never);
+
+		const model = calls.find((c) => c.name === "get_order");
+		const full = calls.find((c) => c.name === "get_order_full");
+		expect(model).toBeDefined();
+		expect(full).toBeDefined();
+		expect(model!.config._meta?.ui?.resourceUri).toBe("ui://saleor/order-receipt.html");
+		expect(full!.config._meta?.ui?.resourceUri).toBe("ui://saleor/order-receipt.html");
+		expect(model!.config._meta?.ui?.visibility).toBeUndefined();
+		expect(full!.config._meta?.ui?.visibility).toEqual(["app"]);
+	});
+
+	it("update_checkout is app-only, wired to checkout-summary view", () => {
+		const { server, calls } = createCapturingServer();
+		registerCheckoutTools(server as never);
+		const entry = calls.find((c) => c.name === "update_checkout");
+		expect(entry).toBeDefined();
+		expect(entry!.config._meta?.ui?.resourceUri).toBe("ui://saleor/checkout-summary.html");
+		expect(entry!.config._meta?.ui?.visibility).toEqual(["app"]);
+		expect(calls.find((c) => c.name === "update_checkout_full")).toBeUndefined();
+	});
+
+	it("complete_checkout is app-only, wired to order-receipt view", () => {
+		const { server, calls } = createCapturingServer();
+		registerCheckoutTools(server as never);
+		const entry = calls.find((c) => c.name === "complete_checkout");
+		expect(entry).toBeDefined();
+		expect(entry!.config._meta?.ui?.resourceUri).toBe("ui://saleor/order-receipt.html");
+		expect(entry!.config._meta?.ui?.visibility).toEqual(["app"]);
+	});
+});
+
+// ─── F7 mapper data-policy tests ────────────────────────────────────
+
+function fixtureSaleorOrder(overrides: Partial<SaleorOrder> = {}): SaleorOrder {
+	const base: SaleorOrder = {
+		id: "ord_1",
+		number: "1001",
+		status: "fulfilled",
+		statusDisplay: "Fulfilled",
+		created: "2026-05-13T10:00:00Z",
+		userEmail: "buyer@example.com",
+		isPaid: true,
+		channel: { slug: "default-channel" },
+		total: {
+			gross: { amount: 24.98, currency: "USD" },
+			tax: { amount: 0, currency: "USD" },
+		},
+		subtotal: { gross: { amount: 19.98, currency: "USD" } },
+		shippingPrice: { gross: { amount: 5, currency: "USD" } },
+		shippingAddress: {
+			firstName: "Alice",
+			lastName: "Doe",
+			streetAddress1: "1 Test St",
+			streetAddress2: "",
+			city: "Prague",
+			postalCode: "11000",
+			country: { code: "CZ" },
+			phone: "+420600000000",
+		},
+		billingAddress: null,
+		lines: [
+			{
+				id: "line_1",
+				productName: "Cosmic Mug",
+				variantName: "Default",
+				quantity: 2,
+				unitPrice: { gross: { amount: 9.99, currency: "USD" } },
+				totalPrice: { gross: { amount: 19.98, currency: "USD" } },
+				thumbnail: { url: "https://cdn.example/p1.webp", alt: null },
+			},
+		],
+		deliveryMethod: { name: "Standard" },
+		discounts: [],
+	};
+	return { ...base, ...overrides };
+}
+
+describe("F7 mappers — model vs full payload split", () => {
+	it("checkout summary model payload omits buyer + addresses; full carries them", () => {
+		const checkout = fixtureCheckout();
+		const summary = mapCheckoutToCheckoutSummary(checkout);
+		const full = mapCheckoutToCheckoutSummaryFull(checkout);
+		const summaryJson = JSON.stringify(summary);
+
+		expect(summaryJson).not.toContain("buyer@example.com");
+		expect(summaryJson).not.toContain("Alice");
+		expect(summaryJson).not.toContain("+420600000000");
+		expect(summaryJson).not.toContain("shipping_address");
+		expect(summaryJson).not.toContain("billing_address");
+		// The new bits: selected + available shipping methods are present
+		expect(summary.selectedDeliveryMethod?.id).toBe("ship_1");
+		expect(summary.availableShippingMethods).toEqual([]);
+		// Full payload exposes the PII pieces
+		expect(full.buyer.email).toBe("buyer@example.com");
+		expect(full.shipping_address?.streetAddress1).toBe("1 Test St");
+	});
+
+	it("checkout summary model payload locks the allow-listed key set", () => {
+		const summary = mapCheckoutToCheckoutSummary(fixtureCheckout());
+		const keys = Object.keys(summary);
+		// 9 stable keys (+ optional `warnings`). Plan F7's draft "≤ 8" target
+		// predated the explicit `availableShippingMethods` field — we kept it
+		// because the picker reuses the same payload, and an extra `public`-
+		// class field doesn't widen the PII surface. Locking the set is the
+		// real defense.
+		expect(new Set(keys)).toEqual(
+			new Set([
+				"id",
+				"currency",
+				"lines",
+				"totals",
+				"selectedDeliveryMethod",
+				"availableShippingMethods",
+				"hasEmail",
+				"hasShippingAddress",
+				"hasDeliveryMethod",
+			]),
+		);
+	});
+
+	it("order receipt model payload omits lines, addresses, buyer email", () => {
+		const order = fixtureSaleorOrder();
+		const model = mapOrderToOrderReceipt(order);
+		const json = JSON.stringify(model);
+		expect(json).not.toContain("buyer@example.com");
+		expect(json).not.toContain("Alice");
+		expect(json).not.toContain("1 Test St");
+		expect(json).not.toContain("Cosmic Mug");
+		expect(json).not.toContain("shipping_address");
+	});
+
+	it("order receipt model payload has ≤ 7 fields", () => {
+		const model = mapOrderToOrderReceipt(fixtureSaleorOrder());
+		const keys = Object.keys(model);
+		expect(keys.length).toBeLessThanOrEqual(7);
+		expect(new Set(keys)).toEqual(
+			new Set(["id", "number", "status", "statusDisplay", "currency", "total", "isPaid"]),
+		);
+	});
+
+	it("order receipt full payload exposes lines + buyer + addresses", () => {
+		const full = mapOrderToOrderReceiptFull(fixtureSaleorOrder());
+		expect(full.buyer.email).toBe("buyer@example.com");
+		expect(full.lines).toHaveLength(1);
+		expect(full.lines[0]!.productName).toBe("Cosmic Mug");
+		expect(full.shipping_address?.streetAddress1).toBe("1 Test St");
+		expect(full.deliveryMethod).toBe("Standard");
+		expect(full.totals.shipping).toBe(5);
+	});
+
+	it("order receipt full handles missing shipping address / delivery method", () => {
+		const full = mapOrderToOrderReceiptFull(
+			fixtureSaleorOrder({ shippingAddress: null, deliveryMethod: null }),
+		);
+		expect(full.shipping_address).toBeNull();
+		expect(full.deliveryMethod).toBeNull();
 	});
 });
 

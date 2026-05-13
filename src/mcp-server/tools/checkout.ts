@@ -10,6 +10,8 @@ import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { APP_RESOURCES } from "../apps/registry";
 import { mapCheckoutToCartPreview } from "../apps/cart-preview-mapper";
+import { mapCheckoutToCheckoutSummary } from "../apps/checkout-summary-mapper";
+import { mapOrderToOrderReceipt } from "../apps/order-receipt-mapper";
 import { wrapAsData } from "../apps/sanitize";
 import { saleorQuery, getDefaultChannel } from "../saleor-client";
 import {
@@ -30,7 +32,7 @@ import {
 	type CheckoutAddPromoCodeData,
 	type CheckoutCompleteData,
 } from "@/lib/protocols/shared/checkout-queries";
-import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
+import { ORDER_BY_ID_QUERY, type OrderByIdData } from "@/lib/protocols/shared/order-queries";
 import { processStripePayment } from "@/lib/protocols/shared/payment";
 
 /**
@@ -177,72 +179,36 @@ export function registerCheckoutTools(server: McpServer) {
 	);
 
 	// ---------------------------------------------------------------
-	// get_checkout — wired to ui://saleor/cart-preview.html (F6).
-	// Same shape change as `create_checkout`: returns `CartPreviewPayload`,
-	// wrapped, no PII. Use the paired `get_cart_full` to retrieve the
-	// address-bearing payload from the iframe.
+	// update_checkout — app-only mutator, wired to checkout-summary view (F7).
+	//
+	// Visibility `["app"]` — not in `tools/list`, callable only from the
+	// iframe (`bridge.callTool("update_checkout", {...})`) or from a host
+	// LLM that already knows it exists. Response is the model-visible
+	// `CheckoutSummaryPayload`; the iframe re-fetches the full payload
+	// (with addresses) via `bridge.fetchAppData("get_checkout", ...)`.
 	// ---------------------------------------------------------------
 	registerAppTool(
 		server,
-		"get_checkout",
+		"update_checkout",
 		{
-			title: "Get checkout",
+			title: "Update checkout (app-only)",
 			description:
-				"Get the current cart-preview state of a checkout session. Returns lines, totals, and status flags (no buyer/address PII — use `get_cart_full` from the iframe for that).",
+				"Update a checkout session (email, addresses, shipping method, promo code). Returns the refreshed checkout-summary payload (no PII).",
 			inputSchema: {
 				api_key: z
 					.string()
 					.optional()
 					.describe("Optional agent API key (iframe omits; HTTP agents may pass)."),
 				checkout_id: z.string().describe("Saleor checkout ID"),
+				email: z.string().email().optional().describe("Update customer email"),
+				shipping_address: addressSchema.optional().describe("Update shipping address"),
+				billing_address: addressSchema.optional().describe("Update billing address"),
+				delivery_method_id: z.string().optional().describe("Shipping/delivery method ID"),
+				promo_code: z.string().optional().describe("Promo/voucher code to apply"),
 			},
 			_meta: {
-				ui: { resourceUri: APP_RESOURCES.cartPreview.uri },
+				ui: { resourceUri: APP_RESOURCES.checkoutSummary.uri, visibility: ["app"] as const },
 			},
-		},
-		async ({ api_key, checkout_id }) => {
-			if (!validateApiKey(api_key)) {
-				return authError();
-			}
-
-			const result = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, {
-				id: checkout_id,
-			});
-
-			if (!result.ok) {
-				return { content: [{ type: "text" as const, text: `Error: ${result.error}` }] };
-			}
-
-			if (!result.data.checkout) {
-				return { content: [{ type: "text" as const, text: "Checkout not found" }] };
-			}
-
-			const payload = mapCheckoutToCartPreview(result.data.checkout);
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: wrapAsData(JSON.stringify(payload, null, 2), "cart-preview"),
-					},
-				],
-			};
-		},
-	);
-
-	// ---------------------------------------------------------------
-	// update_checkout
-	// ---------------------------------------------------------------
-	server.tool(
-		"update_checkout",
-		"Update a checkout session (email, addresses, shipping method, promo code). Requires api_key.",
-		{
-			api_key: z.string().describe("Agent API key for authentication"),
-			checkout_id: z.string().describe("Saleor checkout ID"),
-			email: z.string().email().optional().describe("Update customer email"),
-			shipping_address: addressSchema.optional().describe("Update shipping address"),
-			billing_address: addressSchema.optional().describe("Update billing address"),
-			delivery_method_id: z.string().optional().describe("Shipping/delivery method ID"),
-			promo_code: z.string().optional().describe("Promo/voucher code to apply"),
 		},
 		async ({
 			api_key,
@@ -339,29 +305,61 @@ export function registerCheckoutTools(server: McpServer) {
 				return { content: [{ type: "text" as const, text: "Checkout not found" }] };
 			}
 
-			const mapped = mapCheckoutToProtocol(result.data.checkout);
-			const response = allErrors.length > 0 ? { ...mapped, warnings: allErrors } : mapped;
+			const summary = mapCheckoutToCheckoutSummary(result.data.checkout);
+			const payload =
+				allErrors.length > 0
+					? {
+							...summary,
+							warnings: [
+								...(summary.warnings ?? []),
+								...allErrors.map((message) => ({ code: "update_partial", message })),
+							],
+						}
+					: summary;
 
 			return {
-				content: [{ type: "text" as const, text: JSON.stringify(response, null, 2) }],
+				content: [
+					{
+						type: "text" as const,
+						text: wrapAsData(JSON.stringify(payload, null, 2), "checkout-summary"),
+					},
+				],
 			};
 		},
 	);
 
 	// ---------------------------------------------------------------
-	// complete_checkout
+	// complete_checkout — app-only finaliser, wired to order-receipt view (F7).
+	//
+	// Visibility `["app"]` per threat-model §4: payment-token-bearing
+	// tool calls should never leak into `tools/list`. Response is the
+	// model-visible `OrderReceiptPayload` (7 fields) wrapped by
+	// `wrapAsData(..., "order-receipt")`; the iframe pulls the full
+	// payload (lines, totals, addresses, buyer email) via
+	// `bridge.fetchAppData("get_order", {order_id})`.
 	// ---------------------------------------------------------------
-	server.tool(
+	registerAppTool(
+		server,
 		"complete_checkout",
-		"Complete a checkout with payment. Processes Stripe payment token, then finalizes the order. Requires api_key.",
 		{
-			api_key: z.string().describe("Agent API key for authentication"),
-			checkout_id: z.string().describe("Saleor checkout ID"),
-			payment_token: z.string().describe("Stripe shared payment token"),
-			payment_gateway_id: z
-				.string()
-				.optional()
-				.describe("Payment gateway ID (defaults to STRIPE_GATEWAY_ID or 'app.saleor.stripe')"),
+			title: "Complete checkout (app-only)",
+			description:
+				"Complete a checkout with a Stripe payment token. Returns the model-visible order receipt payload; iframe pulls full details (lines, addresses) via `get_order_full`.",
+			inputSchema: {
+				api_key: z
+					.string()
+					.optional()
+					.describe("Optional agent API key (iframe omits; HTTP agents may pass)."),
+				checkout_id: z.string().describe("Saleor checkout ID"),
+				payment_token: z.string().describe("Stripe shared payment token (one-time)"),
+				payment_gateway_id: z
+					.string()
+					.optional()
+					.describe("Payment gateway ID (defaults to STRIPE_GATEWAY_ID or 'app.saleor.stripe')"),
+			},
+			_meta: {
+				ui: { resourceUri: APP_RESOURCES.orderReceipt.uri, visibility: ["app"] as const },
+			},
 		},
 		async ({ api_key, checkout_id, payment_token, payment_gateway_id: _payment_gateway_id }) => {
 			if (!validateApiKey(api_key)) {
@@ -447,19 +445,42 @@ export function registerCheckoutTools(server: McpServer) {
 				};
 			}
 
+			// Step 3: Fetch the freshly-created order so we can render a
+			// real receipt. `checkoutComplete` only echoes back {id, number,
+			// status} — not enough for `OrderReceiptPayload`'s 7 fields.
+			const orderResult = await saleorQuery<OrderByIdData>(ORDER_BY_ID_QUERY, { id: order.id });
+			if (orderResult.ok && orderResult.data.order) {
+				const payload = mapOrderToOrderReceipt(orderResult.data.order);
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: wrapAsData(JSON.stringify(payload, null, 2), "order-receipt"),
+						},
+					],
+				};
+			}
+
+			// Fallback: order fetch failed; ship the minimal mutation echo.
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: JSON.stringify(
-							{
-								order_id: order.id,
-								order_number: order.number,
-								status: order.status,
-								transaction_id: paymentResult.transactionId,
-							},
-							null,
-							2,
+						text: wrapAsData(
+							JSON.stringify(
+								{
+									id: order.id,
+									number: order.number,
+									status: order.status,
+									statusDisplay: order.status,
+									currency: "",
+									total: 0,
+									isPaid: false,
+								},
+								null,
+								2,
+							),
+							"order-receipt",
 						),
 					},
 				],
