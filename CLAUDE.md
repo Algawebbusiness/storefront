@@ -801,20 +801,30 @@ src/app/api/products/feed.json/route.ts   — JSON feed všech produktů s varia
 
 ```
 src/mcp-server/
-  index.ts                — McpServer setup, registrace nástrojů
+  index.ts                — McpServer setup, registrace nástrojů + MCP Apps resources
   saleor-client.ts        — Lightweight GraphQL client pro MCP tools
+  apps/                   — MCP Apps layer (Fáze F)
+    registry.ts           — APP_RESOURCES map: 6 ui://saleor/*.html resources
+    serve-html.ts         — load bundle + inject brand.css + window.__BRAND__
+    csp.ts                — buildCsp() → { resourceDomains, connectDomains }
+    paired-tools.ts       — registerToolPair + pairedAppToolName ("name" → "name_full")
+    sanitize.ts           — sanitizeForLlm (12 injection vectors) + wrapAsData (delimiter)
+    data-policy.ts        — FIELD_CLASSES table (5 classes) + classifyPath
+    index.ts              — registerAllAppResources(server)
   tools/
     search.ts             — search_products
     categories.ts         — list_categories, get_category_products
     products.ts           — get_product_detail, compare_products
     collections.ts        — get_collections
     store-info.ts         — get_store_info
+    checkout.ts           — 5 authenticated checkout tools
 src/app/mcp/route.ts      — HTTP endpoint (WebStandardStreamableHTTPServerTransport)
 ```
 
-**7 veřejných read-only nástrojů.** Žádná autentizace. Stateless mód.
+**Read-only tooly:** 7 veřejných (search, categories, products, collections, store-info). Žádná autentizace. Stateless mód.
+**Checkout tooly:** 5 mutujících (create/get/update/complete/cancel) — vyžadují agent identity přes Phase B verifyAgentRequest.
 
-**Závislosti:** `@modelcontextprotocol/sdk`, `zod`
+**Závislosti:** `@modelcontextprotocol/sdk@^1.29`, `@modelcontextprotocol/ext-apps@1.7.1`, `zod`
 
 **Testování MCP:**
 
@@ -827,6 +837,77 @@ curl -X POST http://localhost:3000/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}},"id":1}'
 ```
+
+### 4.5 MCP Apps — visual UI vrstva (Fáze F, in progress)
+
+Storefront staví na MCP Apps spec (`2026-01-26`) — k existujícím MCP tools přidává `_meta.ui.resourceUri` na `ui://saleor/*.html` resources, které host (Claude Desktop, VS Code Copilot, Goose, Postman, MCPJam) renderuje jako sandboxovaný iframe. Tools nadále vrací JSON, `_meta.ui` je čistě aditivní — hosty bez MCP Apps podpory dostanou stále validní text response.
+
+**Workspace `src/mcp-apps/`** (izolovaný Vite + tsconfig, nedotýká se Next.js builds):
+
+```
+src/mcp-apps/
+  vite.config.ts          — per-view build (MCP_APPS_VIEW env), vite-plugin-singlefile
+  tsconfig.json           — vlastní, baseUrl=../.. pro @/* alias
+  views/                  — 6 entry HTML wrapperů
+    product-card.html, product-list.html, product-detail.html,
+    cart-preview.html, checkout-summary.html, order-receipt.html
+  src/
+    entries/              — entry .tsx per view (F1–F3 jsou stuby, F4+ real)
+    components/           — sdílené React komponenty (F4+ vytváří ProductCard, ProductList, ...)
+    bridge.ts             — createBridge(name) — wrapuje App z ext-apps
+                             • onResult(handler) — JSON.parse text content
+                             • callTool(name, args) — tools/call přes hosta
+                             • openLink(url) — ui/open-link
+                             • sendUiMessage(msg) — typed-enum ui/message (F3)
+                             • fetchAppData(toolName, args) — paired _full tool (F3)
+                             • sendMessage (legacy, @deprecated)
+    ui-messages.ts        — UiMessage discriminated union (4 kinds) + renderUiMessage
+    theme.ts              — getBrand() reads window.__BRAND__ (cross-tenant fallback)
+    types.ts              — AppPayload base (rozšířen per view v F4+)
+  dist/                   — git-ignored, output `views/<name>.html` ~60 KB gzip each
+```
+
+**Architektonické konvence (NEPORUŠOVAT):**
+
+1. **Paired-tool pattern pro PII** — pro každý tool s `customer-pii` / `business-confidential` poli v full payloadu **MUSÍ** být registrace přes `registerToolPair({resourceUri, model, app})`. Model tool vrací minimal (`public` + `cart-state`), `<name>_full` tool má `visibility: ["app"]`, NENÍ v `tools/list`, iframe ho volá přes `bridge.fetchAppData(toolName, args)`. Plánováno v F6 (cart) + F7 (checkout/order).
+2. **Standalone app-only tools** — UI affordances (`update_cart_line`, `select_shipping_method`, `apply_loyalty_code`, `complete_checkout`) registrujeme přímo přes `registerAppTool` s `visibility: ["app"]`, ne `registerToolPair`. Model je nikdy neuvidí v `tools/list`.
+3. **Sanitization** — VŠECHEN free-form user content (product description, customer notes, reviews) `sanitizeForLlm(text)` před tím, než se serializuje do model-visible content bloku. Strip 12 prompt-injection vektorů.
+4. **Delimiter wrapping** — VŠECHNY model-visible text content bloky obal `wrapAsData(jsonText, "kind-label")` — defense proti indirect prompt injection. `sanitizeAndWrap` helper pro prose-only kanály.
+5. **ui/message** — iframe **NIKDY** nevolá `bridge.sendMessage(freeFormText)` — jen `bridge.sendUiMessage({kind, ...ids})` typed-enum. Server-rendered neutrální text, žádné částky/adresy/emaily v zprávách.
+6. **Žádný api_key / OAuth JWT / payment_token v iframe payloadech** — host re-injektne agent identitu z původního session přes subject preservation.
+7. **`ui://saleor/<name>.html`** — naming convention pro všechny UI resources. Group prefix předchází kolizím s jinými MCP servery.
+8. **brand.css inline + `window.__BRAND__`** — runtime injectované do served HTML před React mountem (viz `serve-html.ts`). Per-tenant theming bez Vite rebuilds.
+9. **Edge-runtime safe** — žádný `node:crypto` v iframe ani v serve-html path. `globalThis.crypto.subtle` jen.
+10. **CSP allowlist přes env** — `NEXT_PUBLIC_SALEOR_API_URL` + `NEXT_PUBLIC_MEDIA_CDN_ORIGIN` + `MCP_APPS_EXTRA_RESOURCE_DOMAINS` / `MCP_APPS_EXTRA_CONNECT_DOMAINS`. Žádný hard-code.
+
+**Build + test workflow:**
+
+```bash
+pnpm run build:mcp-apps    # Vite per-view loop, výstup do src/mcp-apps/dist/views/
+pnpm exec tsc --noEmit                              # root tsconfig
+pnpm exec tsc --noEmit -p src/mcp-apps/tsconfig.json # mcp-apps tsconfig
+pnpm exec vitest run                                 # všech 455 tests (stav po F3)
+pnpm run build                                       # Next.js — prebuild chainuje build:mcp-apps
+```
+
+Bundle budget: **250 KB gzip per view** (build script flagne ⚠️ over budget).
+Pre-existing `/checkout` cacheComponents/Suspense bug pořád blokuje plný `next build` — unrelated k MCP Apps, separátní fix.
+
+**Klíčové docs:**
+
+- `agentic-commerce-2026-plan.md` — plán fáze F (F1–F9), `Stav implementace` na konci dokumentu.
+- `docs/mcp-apps-threat-model.md` — security model, mitigation matrix, spec resolution log (CSP shape ✅, per-content-block visibility ❌ → paired-tool ✅).
+- `~/code/storefront/CLAUDE.md` (this file) — top-of-file status panel.
+
+**Status (stav 13. května 2026):**
+
+- ✅ **F1** — Vite build pipeline, ext-apps@1.7.1 + SDK ^1.29.
+- ✅ **F2** — 6 ui:// resources registered, theme injection, CSP, bridge.
+- ✅ **F3** — Paired-tool helper, sanitize + wrapAsData, ui-messages typed-enum, threat model. 455/455 tests pass.
+- 🚧 **F4 (next)** — Catalog tools (search_products, get_category_products, get_collections) wire `_meta.ui.resourceUri` → `ui://saleor/product-list.html`. **Žádný paired-tool** (catalog je `public` třída). Postavit ProductCard + ProductList (embla-carousel) React komponenty v `src/mcp-apps/src/components/`. Aplikovat `sanitizeForLlm` na `product.description` + `wrapAsData` na celý JSON.stringify výsledek. Update entry souborů `entries/product-card.tsx` + `entries/product-list.tsx` z F2 stubu na real komponenty. Bundle target < 200 KB gzip. Nový test `__tests__/mcp-apps/apps-meta.test.ts` ověří `_meta.ui.resourceUri` na 3 catalog tools. Plný step-by-step viz F4 v plánu.
+- F5–F9 — product detail (paired? — TBD), cart (paired), checkout/order (paired), fallback, docs.
+
+**F4 deciation point:** `get_collections` vrací **kolekce**, ne produkty — jestli renderovat přes product-list view (sample products) nebo nechat pro F-později (samostatná collection view). Doporučení: pro F4 zaměřit jen na `search_products` + `get_category_products` (oba product-list view), `get_collections` zůstává jako plain JSON, doplníme v F-pozdější. Tím se F4 zúží na 2 tool updates místo 3.
 
 ### 5. brand.ts — branding konfigurace
 
