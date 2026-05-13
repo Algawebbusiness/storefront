@@ -1,6 +1,11 @@
+import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { type McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { APP_RESOURCES } from "../apps/registry";
+import { sanitizeForLlm, wrapAsData } from "../apps/sanitize";
 import { saleorQuery, getDefaultChannel } from "../saleor-client";
+import { parseEditorJSToText } from "@/lib/editorjs";
+import type { ProductDetailPayload, ProductFull } from "@/mcp-apps/src/types";
 
 const PRODUCT_DETAIL_QUERY = `
 	query MCPProductDetail($slug: String!, $channel: String!) {
@@ -9,8 +14,6 @@ const PRODUCT_DETAIL_QUERY = `
 			name
 			slug
 			description
-			seoTitle
-			seoDescription
 			isAvailable
 			category { name slug }
 			productType { name }
@@ -31,7 +34,6 @@ const PRODUCT_DETAIL_QUERY = `
 					attribute { slug name }
 					values { name slug }
 				}
-				media { url alt }
 			}
 			attributes {
 				attribute { slug name }
@@ -47,8 +49,6 @@ interface ProductDetailData {
 		name: string;
 		slug: string;
 		description: string | null;
-		seoTitle: string | null;
-		seoDescription: string | null;
 		isAvailable: boolean;
 		category: { name: string; slug: string } | null;
 		productType: { name: string };
@@ -69,7 +69,6 @@ interface ProductDetailData {
 				attribute: { slug: string; name: string };
 				values: Array<{ name: string; slug: string }>;
 			}>;
-			media: Array<{ url: string; alt: string | null }>;
 		}>;
 		attributes: Array<{
 			attribute: { slug: string; name: string };
@@ -78,19 +77,34 @@ interface ProductDetailData {
 	} | null;
 }
 
-function formatProduct(product: NonNullable<ProductDetailData["product"]>) {
+/**
+ * Map a Saleor product to the iframe-bound `ProductFull` shape.
+ *
+ * Two non-trivial transforms:
+ *   - `description` is Saleor's EditorJS-encoded rich text. We parse it
+ *     to plain text via `parseEditorJSToText`, then strip prompt-injection
+ *     vectors via `sanitizeForLlm` before it reaches the LLM-visible
+ *     content block (threat-model §3 mitigation matrix).
+ *   - `price.max` is `null` when the product has a single price point
+ *     (matches the F4 `ProductCardPayload` convention so cards inside
+ *     the detail compare-row render the same way as cards in lists).
+ */
+function formatProduct(product: NonNullable<ProductDetailData["product"]>): ProductFull {
+	const plain = parseEditorJSToText(product.description);
+	const description = plain ? sanitizeForLlm(plain) : null;
+
+	const min = product.pricing?.priceRange?.start?.gross?.amount ?? 0;
+	const max = product.pricing?.priceRange?.stop?.gross?.amount ?? min;
+	const currency = product.pricing?.priceRange?.start?.gross?.currency ?? "";
+
 	return {
 		name: product.name,
 		slug: product.slug,
-		description: product.description,
+		description,
 		category: product.category?.name ?? null,
 		productType: product.productType.name,
 		inStock: product.isAvailable,
-		price: {
-			currency: product.pricing?.priceRange?.start?.gross?.currency ?? null,
-			min: product.pricing?.priceRange?.start?.gross?.amount ?? null,
-			max: product.pricing?.priceRange?.stop?.gross?.amount ?? null,
-		},
+		price: { min, max: max === min ? null : max, currency },
 		images: product.media.filter((m) => m.type === "IMAGE").map((m) => ({ url: m.url, alt: m.alt })),
 		variants: product.variants.map((v) => ({
 			id: v.id,
@@ -100,31 +114,33 @@ function formatProduct(product: NonNullable<ProductDetailData["product"]>) {
 			quantityAvailable: v.quantityAvailable,
 			price: v.pricing?.price?.gross?.amount ?? null,
 			currency: v.pricing?.price?.gross?.currency ?? null,
-			attributes: v.attributes.reduce(
-				(acc, a) => {
-					acc[a.attribute.slug] = a.values.map((val) => val.name).join(", ");
-					return acc;
-				},
-				{} as Record<string, string>,
-			),
-		})),
-		attributes: product.attributes.reduce(
-			(acc, a) => {
-				acc[a.attribute.slug] = a.values.map((val) => val.name);
+			attributes: v.attributes.reduce<Record<string, string>>((acc, a) => {
+				acc[a.attribute.slug] = a.values.map((val) => val.name).join(", ");
 				return acc;
-			},
-			{} as Record<string, string[]>,
-		),
+			}, {}),
+		})),
+		attributes: product.attributes.reduce<Record<string, string[]>>((acc, a) => {
+			acc[a.attribute.slug] = a.values.map((val) => val.name);
+			return acc;
+		}, {}),
 	};
 }
 
 export function registerProductTools(server: McpServer) {
-	server.tool(
+	registerAppTool(
+		server,
 		"get_product_detail",
-		"Get complete product details including all variants with prices, availability, attributes, and images.",
 		{
-			slug: z.string().describe("Product URL slug"),
-			channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
+			title: "Get product detail",
+			description:
+				"Get complete product details including all variants with prices, availability, attributes, and images.",
+			inputSchema: {
+				slug: z.string().describe("Product URL slug"),
+				channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
+			},
+			_meta: {
+				ui: { resourceUri: APP_RESOURCES.productDetail.uri },
+			},
 		},
 		async ({ slug, channel }) => {
 			const result = await saleorQuery<ProductDetailData>(PRODUCT_DETAIL_QUERY, { slug, channel });
@@ -137,20 +153,36 @@ export function registerProductTools(server: McpServer) {
 				return { content: [{ type: "text" as const, text: "Product not found" }] };
 			}
 
+			const payload: ProductDetailPayload = {
+				mode: "single",
+				product: formatProduct(result.data.product),
+			};
+
 			return {
 				content: [
-					{ type: "text" as const, text: JSON.stringify(formatProduct(result.data.product), null, 2) },
+					{
+						type: "text" as const,
+						text: wrapAsData(JSON.stringify(payload, null, 2), "product-detail"),
+					},
 				],
 			};
 		},
 	);
 
-	server.tool(
+	registerAppTool(
+		server,
 		"compare_products",
-		"Compare 2-5 products side by side. Returns a comparison table with prices, attributes, and availability.",
 		{
-			slugs: z.array(z.string()).min(2).max(5).describe("Product slugs to compare"),
-			channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
+			title: "Compare products",
+			description:
+				"Compare 2-5 products side by side. Returns a comparison table with prices, attributes, and availability.",
+			inputSchema: {
+				slugs: z.array(z.string()).min(2).max(5).describe("Product slugs to compare"),
+				channel: z.string().default(getDefaultChannel()).describe("Sales channel slug"),
+			},
+			_meta: {
+				ui: { resourceUri: APP_RESOURCES.productDetail.uri },
+			},
 		},
 		async ({ slugs, channel }) => {
 			const results = await Promise.all(
@@ -162,11 +194,20 @@ export function registerProductTools(server: McpServer) {
 				.map((r) => formatProduct(r.data.product!));
 
 			if (products.length === 0) {
-				return { content: [{ type: "text" as const, text: "No products found for the given slugs" }] };
+				return {
+					content: [{ type: "text" as const, text: "No products found for the given slugs" }],
+				};
 			}
 
+			const payload: ProductDetailPayload = { mode: "compare", products };
+
 			return {
-				content: [{ type: "text" as const, text: JSON.stringify({ comparison: products }, null, 2) }],
+				content: [
+					{
+						type: "text" as const,
+						text: wrapAsData(JSON.stringify(payload, null, 2), "product-detail"),
+					},
+				],
 			};
 		},
 	);
