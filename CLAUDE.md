@@ -1227,18 +1227,18 @@ pnpm run build            # Produkční build
 
 ### ⏳ Progress (remediation branch `security-hardening`, pushed to GitHub origin)
 
-| Block                | Scope                                                                                                | Status                                                              |
-| -------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 0                    | Config hardening (image proxy, headers, webhook fail-close, CI gate, cookie)                         | ✅ done                                                             |
-| 1                    | Stored XSS — escape JSON-LD (8 call sites)                                                           | ✅ done (strict CSP deferred — `cacheComponents` conflict)          |
-| 7                    | SSRF guard on `webhook_url` (+18 tests)                                                              | ✅ done (DNS-rebinding residual)                                    |
-| 15                   | Low/Info hardening batch                                                                             | ✅ done (3 items deferred)                                          |
-| 3a                   | **Order IDOR** — ownership on order read + return/refund                                             | ✅ done                                                             |
-| 3b                   | Cart/checkout agent-binding + ACP/approvals ownership                                                | ⏳ TODO (entangled w/ Block 4)                                      |
-| 2                    | Auth fail-closed defaults (`validateApiKey`, `AGENT_API_KEYS`)                                       | ✅ done (prod fail-closed; public `/mcp` tool split deferred to 3b) |
-| 4                    | ACP → guard chain + delete deprecated auth                                                           | ⏳ TODO (unlocks 3b for ACP)                                        |
-| 9                    | Durable store (Redis/DB) — INFRA                                                                     | ⏳ TODO (foundation for 5/6/8/10)                                   |
-| 5,6,8,10,11,12,13,14 | signing replay, JWT token leak, idempotency, rate-limit, scope, JWT correctness, perf, quality/tests | ⏳ TODO                                                             |
+| Block                | Scope                                                                                                | Status                                                                                     |
+| -------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 0                    | Config hardening (image proxy, headers, webhook fail-close, CI gate, cookie)                         | ✅ done                                                                                    |
+| 1                    | Stored XSS — escape JSON-LD (8 call sites)                                                           | ✅ done (strict CSP deferred — `cacheComponents` conflict)                                 |
+| 7                    | SSRF guard on `webhook_url` (+18 tests)                                                              | ✅ done (DNS-rebinding residual)                                                           |
+| 15                   | Low/Info hardening batch                                                                             | ✅ done (3 items deferred)                                                                 |
+| 3a                   | **Order IDOR** — ownership on order read + return/refund                                             | ✅ done                                                                                    |
+| 3b                   | Cart/checkout agent-binding + ACP/approvals ownership                                                | 🟡 partial (ACP order IDOR done in 4a; cart/checkout binding + approvals TODO)             |
+| 2                    | Auth fail-closed defaults (`validateApiKey`, `AGENT_API_KEYS`)                                       | ✅ done (prod fail-closed; public `/mcp` tool split deferred to 3b)                        |
+| 4                    | ACP → guard chain + delete deprecated auth                                                           | 🟡 4a done (withAcpRoute; complete+orders migrated); 4b = migrate rest + delete deprecated |
+| 9                    | Durable store (Redis/DB) — INFRA                                                                     | ⏳ TODO (foundation for 5/6/8/10)                                                          |
+| 5,6,8,10,11,12,13,14 | signing replay, JWT token leak, idempotency, rate-limit, scope, JWT correctness, perf, quality/tests | ⏳ TODO                                                                                    |
 
 **Closed so far:** 5 HIGH (SSRF webhook_url, stored XSS, open image proxy, webhook fail-open, order IDOR) + many Med/Low/Info. Full test suite green throughout (530/530); every block committed separately.
 
@@ -1284,13 +1284,22 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 **Phase 3b — Cart/checkout + ACP ownership (TODO, entangled with Block 4):**
 
 - [ ] [HIGH] UCP carts/checkout: bind `agent_id` into checkout metadata at CREATE; on GET/PATCH/DELETE (`carts/[id]/route.ts`) and `checkout-sessions/[id]/complete/route.ts` require `metadata.ucp_agent_id === auth.agent.id` AND/OR (OAuth) `checkout.email === userContext.email`. Checkout query already exposes `email` + `metadata[]`. Needs: find/modify the cart-create route to write the binding; reject unbound carts (fail-closed; pre-existing carts become 404 — acceptable, short-lived).
-- [ ] [HIGH] ACP `orders/[id]` + `acp/checkout/[id]/complete`: **do together with Block 4** — ACP routes use the deprecated `validateAgentApiKey` and carry NO `userContext`, so there is nothing to compare until they're migrated onto the `withUcpRoute`/OAuth guard chain. Same `ownsOrder` helper applies once they have a customer context.
+- [x] [HIGH] ACP `orders/[id]` ownership — DONE in Block 4a: migrated to `withAcpRoute` (gives `userContext`), now applies `ownsOrder` (owner→200, other/agent-only→404). 3 tests.
 - [ ] [LOW] Approval-status GET ownership (`approvals/[id]/route.ts`) — also legacy-auth; fold into Block 4 (compare `approval.agent_id` to the authenticated agent once it has a proper identity).
 
 ### BLOCK 4 — ACP onto guard chain + delete deprecated auth · size: **M/L**
 
-- [ ] [HIGH] Route ACP checkout completion through `withUcpRoute`-equivalent (scope + amount + limits + approval) — `src/app/api/acp/checkout/[id]/complete/route.ts:35-81`.
-- [ ] Delete deprecated `validateAgentApiKey`/`validateOAuthToken`; migrate all ACP routes + `ucp/rest/approvals/[id]` off them — `src/lib/protocols/shared/auth.ts:93-162` (parallel-auth-path quality defect).
+**Phase 4a (DONE):**
+
+- [x] New `src/lib/protocols/acp/route-handler.ts` `withAcpRoute` — ACP sibling of `withUcpRoute` (ACP_ENABLED flag + `verifyAgentRequest` + `hasScope` + `computeAmountCents`/`checkLimits` + activity log), plain JSON responses.
+- [x] [HIGH] `acp/checkout/[id]/complete` migrated to `withAcpRoute`: scope `checkout.complete` + spending cap + B6 high-value approval gate (was bypassing ALL of them).
+- [x] [HIGH] `acp/orders/[id]` migrated → scope `order.read` + `ownsOrder` (closes ACP order IDOR, Phase 3b). 5 ACP guard tests; 543/543 suite.
+
+**Phase 4b (TODO):**
+
+- [ ] Migrate remaining ACP routes off `validateAgentApiKey` → `withAcpRoute`: `acp/checkout/route.ts` (create, scope `checkout.create`), `acp/checkout/[id]/route.ts` (GET/PATCH), `acp/products/feed/route.ts` (scope `catalog.read`).
+- [ ] Migrate `ucp/rest/approvals/[id]` → `withUcpRoute` + verify `approval.agent_id === auth.agent.id` (folds in the LOW approvals IDOR).
+- [ ] Then DELETE deprecated `validateAgentApiKey` + `validateOAuthToken` from `auth.ts` (no call sites left). Keep `unauthorizedResponse`/`protocolDisabledResponse` (generic).
 
 ### BLOCK 5 — ed25519 signature scheme · size: **L** · (nonce store ties to Block 9)
 
