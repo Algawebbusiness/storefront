@@ -1216,3 +1216,117 @@ pnpm run build            # Produkční build
 
 - **Cloudflare Pages**: Root `/`, build command `pnpm run build`, output `out` (s `NEXT_OUTPUT=export`) nebo `.next` (server mode)
 - **Vercel**: Automatická detekce Next.js, jen nastavit env variables
+
+---
+
+## 🔒 SECURITY AUDIT REMEDIATION TRACKER (2026-06-01)
+
+> Full audit report: `docs/SECURITY_AUDIT_2026-06-01.md` (multi-agent STRIDE audit, HEAD ff532994).
+> Verdict: **NOT production-ready.** 49 confirmed security findings (27 High · 9 Medium · 7 Low · 6 Info) + 32 quality findings.
+> This is a resumable checklist. Mark `[x]` when done. Blocks are ordered for sequential work; note dependencies.
+> Audit was read-only — no code changed yet.
+
+### Effort legend
+
+S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = large (cross-cutting / needs infra)
+
+---
+
+### BLOCK 0 — Config hardening quick wins · size: **S** · no logic, low risk
+
+- [ ] Remove `{ hostname: "*" }` from `remotePatterns` (open image proxy / SSRF) — `next.config.js:19-34`. Gate behind `NODE_ENV==='development'` if needed.
+- [ ] Add security-headers `headers()` block: CSP (`default-src 'self'`, `script-src 'self'`+nonce, `frame-ancestors 'none'` on `/oauth/*`), HSTS (prod), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy` — `next.config.js:55-98`.
+- [ ] Saleor webhook fail-closed when `SALEOR_WEBHOOK_SECRET` unset (add missing `else` → 401) — `src/app/api/webhooks/saleor/route.ts:168-177`.
+- [ ] CI: `pnpm install --frozen-lockfile` + add a `pull_request`-triggered job running `tsc --noEmit`, lint, `test:run` as REQUIRED checks (today lint runs only post-deploy) — `.github/workflows/lint.yml:23-24`.
+- [ ] `poweredByHeader: false` — `next.config.js:6-106`. [INFO]
+- [ ] `NEXT_LOCALE` cookie `secure: NODE_ENV==='production'` — `src/middleware.ts:16-21`. [INFO]
+
+### BLOCK 1 — Stored XSS in JSON-LD · size: **S/M**
+
+- [ ] [HIGH] Escape JSON-LD before `dangerouslySetInnerHTML` (`</script>` breakout). Centralize in one `JsonLdScript` helper using the existing escape from `src/mcp-server/apps/serve-html.ts:56` (`<`→`<`, `>`, `&`, U+2028/9). Route ALL call sites through it — `src/lib/seo/json-ld.ts:35-139,242`; PDP `products/[slug]/page.tsx:170-180`; `categories/[slug]:98`; `collections/[slug]:98`; `blog/[slug]:66`; `(main)/page.tsx:58,64`. CWE-79.
+
+### BLOCK 2 — Auth fail-closed defaults · size: **M** · touches auth core
+
+- [ ] [HIGH] `validateApiKey(undefined)` must return `false` (currently returns `true` = "trust transport") and empty-keys set must NOT auto-trust — copies in `src/mcp-server/tools/*.ts` + `auth.ts` (dedup in Block 14). CWE-306.
+- [ ] [HIGH] Stop registering payment/PII/mutating tools (`complete_checkout`/`create`/`update_checkout`, `get_order_full`/`get_cart_full`) on the PUBLIC `/mcp` transport — split into public-read-only vs authenticated server, or gate `/mcp` with `verifyAgentRequest` — `src/app/mcp/route.ts:14-44`, `src/mcp-server/index.ts:46`. CWE-862.
+- [ ] [HIGH] Fail closed when `AGENT_API_KEYS`/signing registry both unset in prod (currently → full-scope `SYNTHETIC_LEGACY_AGENT`, $10k cap). Give synthetic anonymous identity empty scope + zero cap; require explicit dev flag — `src/lib/protocols/shared/auth.ts:33-51,146-148,291-294`. CWE-1188.
+
+### BLOCK 3 — IDOR / object ownership (THE big one) · size: **L** · most dangerous finding
+
+- [ ] [HIGH] Enforce ownership on EVERY resource route. For OAuth-scoped: query Saleor authenticated as `userContext.saleorToken` and/or assert `order.userEmail === auth.userContext.email` (404 on mismatch) before return/refund. For agent-signed: bind `agent_id` into checkout metadata at create, verify on read/complete. CWE-639. Routes:
+  - `src/app/api/ucp/rest/orders/[id]/route.ts:26-49`
+  - `src/app/api/ucp/rest/carts/[id]/route.ts:39-57`
+  - `src/app/api/ucp/rest/checkout-sessions/[id]/complete/route.ts:69-181`
+  - `src/app/api/ucp/rest/orders/[id]/return/route.ts:71-201`
+  - `src/app/api/acp/orders/[id]/route.ts:27-48`
+  - `src/app/api/acp/checkout/[id]/complete/route.ts:27-101`
+- [ ] [HIGH] Add explicit `Authorization` param to `saleorQuery` (111 call sites; currently sends NO auth header — root cause) — `src/mcp-server/saleor-client.ts:24-28`. Consider moving it to `src/lib/protocols/shared/`.
+- [ ] [LOW] Approval-status GET: verify `approval.agent_id === auth.agent.id` else 404 — `src/app/api/ucp/rest/approvals/[id]/route.ts`. CWE-639.
+- [ ] [TEST] Fix integration tests that currently codify IDOR as correct — `__tests__/.../orders.test.ts:73-87`.
+
+### BLOCK 4 — ACP onto guard chain + delete deprecated auth · size: **M/L**
+
+- [ ] [HIGH] Route ACP checkout completion through `withUcpRoute`-equivalent (scope + amount + limits + approval) — `src/app/api/acp/checkout/[id]/complete/route.ts:35-81`.
+- [ ] Delete deprecated `validateAgentApiKey`/`validateOAuthToken`; migrate all ACP routes + `ucp/rest/approvals/[id]` off them — `src/lib/protocols/shared/auth.ts:93-162` (parallel-auth-path quality defect).
+
+### BLOCK 5 — ed25519 signature scheme · size: **L** · (nonce store ties to Block 9)
+
+- [ ] [HIGH] Canonical signing input = method + path + query + `UCP-Timestamp` + `UCP-Nonce` (+ body hash for writes), per RFC 9421. Reject skewed timestamps + reused nonces (persistent store). Require path `id` covered. Treat body-read failure as hard 401 (currently fail-open empty-string) — `src/lib/protocols/shared/auth.ts:215-219,318-324`, `signing.ts:67-78`. CWE-347.
+
+### BLOCK 6 — Saleor tokens out of JWT · size: **M** · (server store ties to Block 9)
+
+- [ ] [HIGH] Stop embedding live Saleor access+refresh tokens as plaintext JWT claims. Store server-side keyed by `jti`/`sub` (Redis/DB) or encrypt (JWE). At minimum drop `saleor_token` from access JWT and keep `saleor_refresh_token` out of the 30-day refresh JWT — `src/lib/oauth/tokens.ts:48-71,125-141`; `token/route.ts:106-127`. CWE-522.
+
+### BLOCK 7 — SSRF on agent webhook_url · size: **M**
+
+- [ ] [HIGH] Validate `webhook_url` before server-side fetch: `new URL()`, require https, block private/loopback/link-local/metadata IPs after DNS, per-agent allowlist, `redirect:'manual'` + re-validate — `orders/[id]/return/route.ts:167`, `return-mapper.ts:253`, `agent-webhooks.ts:79`. CWE-918.
+
+### BLOCK 8 — Idempotency & atomicity on money paths · size: **L** · (durable store ties to Block 9)
+
+- [ ] [HIGH] Checkout completion: require `Idempotency-Key` in durable storage before charging; short-circuit duplicates; reuse fetched checkout — `checkout-sessions/[id]/complete/route.ts:69-151`, `limits.ts:45-96`. CWE-367.
+- [ ] [HIGH] Return/refund: track refund state in Saleor (not in-memory Map), make create-return atomic (unique constraint), idempotency keys — `return-mapper.ts:142-148,269-271`. CWE-367.
+
+### BLOCK 9 — Durable state backing (Redis/DB) · size: **L** · INFRA — unblocks 5/6/8 properly
+
+- [ ] [MEDIUM] Back auth codes, revoked refresh JTIs, rate/spend buckets with Redis/DB + TTLs; fail closed when store unavailable for security checks; make `per_session_cents` cumulative — `oauth/codes.ts:34`, `oauth/tokens.ts:155-166`, `limits.ts:33-36`. CWE-613/837.
+
+### BLOCK 10 — Rate limiting / brute-force · size: **M** · (needs Block 9 store)
+
+- [ ] [MEDIUM] Per-IP + per-account rate limit + lockout on OAuth login/token + reset-password — `oauth/consent/route.ts:23-85`, `oauth/token/route.ts:43-79`, `auth/reset-password/route.ts:28-62`. CWE-307.
+
+### BLOCK 11 — Scope enforcement · size: **M**
+
+- [ ] [MEDIUM] Unmapped OAuth bearer defaults to full synthetic scope; `hasScope` checks `agent.scope` not consented `payload.scope`. Intersect consented + mapped scope — `auth.ts:250-261`. CWE-269.
+- [ ] [LOW] Per-client scope allow-list (all clients get every scope today); implement or remove dead `allowed_scopes` — `oauth/config.ts:53-59`, consent + token routes. CWE-863.
+
+### BLOCK 12 — JWT / refresh correctness · size: **M**
+
+- [ ] [LOW] On refresh, call Saleor `tokenRefresh`, fail if rejected, rotate stored tokens (currently re-stamps stale tokens up to 30d) — `oauth/token/route.ts:160-173`. CWE-613.
+- [ ] [MEDIUM/quality] `verifyJwt` uses base64 not base64url for signature decode (intermittent valid-token rejection); also assert `alg==='HS256'` — `tokens.ts:74-104`.
+
+### BLOCK 13 — Performance · size: **M**
+
+- [ ] [HIGH-perf] Global Saleor request queue adds unconditional ~200ms sleep + caps to 3 concurrent — drop sleep, back off only on observed 429s, exempt cache hits — `graphql.ts:124-181`.
+- [ ] Cache read-only protocol queries (`saleorQuery` uncached); collapse triple checkout fetch (`complete/route.ts:74,103,171`); remove wasted activity-log GET (`agent-log.ts:143-154`); prune unbounded `revokedTokens`.
+
+### BLOCK 14 — Quality / dedup / tests · size: **M**
+
+- [ ] Dedup `validateApiKey` (5 copies, 2 conventions) + ACP PATCH apply block (6× + divergent MCP copy) into shared helpers.
+- [ ] Fix misleading `complete_checkout` fallback that reports a paid order as `isPaid:false,total:0` — `checkout.ts:464-487`.
+- [ ] Add charge-without-completion compensation (void/refund on `checkoutComplete` failure).
+- [ ] Add negative/authz tests: IDOR 403, fail-open fallbacks, JWT alg/header tampering.
+
+### BLOCK 15 — Low/Info hardening backlog · size: **S**
+
+- [ ] Pin caret-ranged deps to exact (`save-exact=true`) — `package.json:41-54,69-85`.
+- [ ] Cap OG param lengths + rate-limit `/api/og` — `og/route.tsx`. CWE-400.
+- [ ] `timingSafeEqual` on revalidate + cron secrets — `revalidate/route.ts:182-189`, `cron/abuse-scan/route.ts:90-95`. CWE-208.
+- [ ] Generic upstream error msg to callers — `saleor-client.ts:46`. CWE-209.
+- [ ] `Number.isInteger` + max on cart line quantity — `carts/[id]/lines/route.ts` + `lines/[lineId]/route.ts`. CWE-20.
+- [ ] Gate ephemeral signing key behind `UCP_ALLOW_EPHEMERAL_SIGNING` + `kid` rotation overlap — `signing.ts:115-134`.
+- [ ] Tighten tsconfig: `allowUnreachableCode:false`, `noUncheckedIndexedAccess:true`.
+
+### Dependency notes
+
+- Block 9 (durable store) is the proper foundation for 5 (nonce), 6 (token store), 8 (idempotency), 10 (rate limit). Each can ship an interim single-instance version, but multi-instance/serverless deploy is unsafe until 9 lands.
+- Blocks 0, 1, 7, 15 are independent — safe to do anytime.
