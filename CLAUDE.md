@@ -1224,7 +1224,25 @@ pnpm run build            # Produkční build
 > Full audit report: `docs/SECURITY_AUDIT_2026-06-01.md` (multi-agent STRIDE audit, HEAD ff532994).
 > Verdict: **NOT production-ready.** 49 confirmed security findings (27 High · 9 Medium · 7 Low · 6 Info) + 32 quality findings.
 > This is a resumable checklist. Mark `[x]` when done. Blocks are ordered for sequential work; note dependencies.
-> Audit was read-only — no code changed yet.
+
+### ⏳ Progress (remediation branch `security-hardening`, pushed to GitHub origin)
+
+| Block                | Scope                                                                                                | Status                                                     |
+| -------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 0                    | Config hardening (image proxy, headers, webhook fail-close, CI gate, cookie)                         | ✅ done                                                    |
+| 1                    | Stored XSS — escape JSON-LD (8 call sites)                                                           | ✅ done (strict CSP deferred — `cacheComponents` conflict) |
+| 7                    | SSRF guard on `webhook_url` (+18 tests)                                                              | ✅ done (DNS-rebinding residual)                           |
+| 15                   | Low/Info hardening batch                                                                             | ✅ done (3 items deferred)                                 |
+| 3a                   | **Order IDOR** — ownership on order read + return/refund                                             | ✅ done                                                    |
+| 3b                   | Cart/checkout agent-binding + ACP/approvals ownership                                                | ⏳ TODO (entangled w/ Block 4)                             |
+| 2                    | Auth fail-closed defaults (`validateApiKey`, `/mcp` tools, `AGENT_API_KEYS`)                         | ⏳ TODO                                                    |
+| 4                    | ACP → guard chain + delete deprecated auth                                                           | ⏳ TODO (unlocks 3b for ACP)                               |
+| 9                    | Durable store (Redis/DB) — INFRA                                                                     | ⏳ TODO (foundation for 5/6/8/10)                          |
+| 5,6,8,10,11,12,13,14 | signing replay, JWT token leak, idempotency, rate-limit, scope, JWT correctness, perf, quality/tests | ⏳ TODO                                                    |
+
+**Closed so far:** 5 HIGH (SSRF webhook_url, stored XSS, open image proxy, webhook fail-open, order IDOR) + many Med/Low/Info. Full test suite green throughout (530/530); every block committed separately.
+
+**Manual follow-ups (not code):** (1) mark `CI / verify` as a required status check in GitHub branch protection; (2) decide CSP strategy vs `cacheComponents`; (3) GitLab mirror push URL on `origin` has a stale/expired PAT in `.git/config` (push to GitHub works; GitLab leg fails) — rotate or remove it.
 
 ### Effort legend
 
