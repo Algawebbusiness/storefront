@@ -22,6 +22,7 @@
  */
 
 import { ORDER_BY_ID_QUERY, type OrderByIdData } from "@/lib/protocols/shared/order-queries";
+import { ownsOrder } from "@/lib/protocols/shared/ownership";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
 import { validateOutboundWebhookUrl } from "@/lib/protocols/shared/url-guard";
 import {
@@ -157,6 +158,18 @@ export const POST = withUcpRoute<OrderParams>(
 		}
 
 		const order = orderResult.data.order;
+
+		// SECURITY (IDOR/BOLA, CWE-639): a full-order `original_payment` return
+		// triggers a real refund below. Without this check any OAuth customer
+		// could refund (and read) ANY order by ID. Require ownership; 404 to a
+		// non-owner so we don't confirm the order exists.
+		if (!ownsOrder(order, auth)) {
+			return signedJsonResponse(
+				{ error: { code: "not_found", message: `Order ${id} not found` } },
+				{ status: 404 },
+			);
+		}
+
 		const eligibility = checkReturnEligibility(order, lines, listReturnsForOrder(id));
 		if (!eligibility.ok) {
 			const status = eligibility.code === "unknown_line" ? 400 : 409;

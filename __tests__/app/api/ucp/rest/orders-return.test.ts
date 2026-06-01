@@ -177,6 +177,31 @@ describe("POST /api/ucp/rest/orders/[id]/return (integration)", () => {
 		expect(body.currency).toBe("USD");
 	});
 
+	it("returns 404 (not 403) when a DIFFERENT customer tries to return/refund the order (IDOR)", async () => {
+		mockVerifyAgentRequest.mockResolvedValueOnce({
+			ok: true,
+			agent: agentWithScopes(["order.return"]),
+			bodyText: JSON.stringify({ reason: "defective", refund_method: "original_payment" }),
+			isLegacy: false,
+			userContext: {
+				userId: "user_99",
+				email: "attacker@evil.example",
+				scope: "orders:return",
+				saleorToken: "saleor_jwt",
+			},
+		});
+		mockSaleorQuery.mockResolvedValueOnce({ ok: true, data: { order: fakeOrder() } });
+
+		const res = await createReturn(
+			requestWithBody({ reason: "defective", refund_method: "original_payment" }),
+			{ params: Promise.resolve({ id: "ord_1" }) },
+		);
+
+		expect(res.status).toBe(404);
+		// No refund mutation must run for a non-owner.
+		expect(mockSaleorQuery).toHaveBeenCalledTimes(1);
+	});
+
 	it("returns 409 with window_expired when the order is older than RETURN_WINDOW_DAYS", async () => {
 		mockVerifyAgentRequest.mockResolvedValueOnce({
 			ok: true,

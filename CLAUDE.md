@@ -1254,16 +1254,19 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 3 — IDOR / object ownership (THE big one) · size: **L** · most dangerous finding
 
-- [ ] [HIGH] Enforce ownership on EVERY resource route. For OAuth-scoped: query Saleor authenticated as `userContext.saleorToken` and/or assert `order.userEmail === auth.userContext.email` (404 on mismatch) before return/refund. For agent-signed: bind `agent_id` into checkout metadata at create, verify on read/complete. CWE-639. Routes:
-  - `src/app/api/ucp/rest/orders/[id]/route.ts:26-49`
-  - `src/app/api/ucp/rest/carts/[id]/route.ts:39-57`
-  - `src/app/api/ucp/rest/checkout-sessions/[id]/complete/route.ts:69-181`
-  - `src/app/api/ucp/rest/orders/[id]/return/route.ts:71-201`
-  - `src/app/api/acp/orders/[id]/route.ts:27-48`
-  - `src/app/api/acp/checkout/[id]/complete/route.ts:27-101`
-- [ ] [HIGH] Add explicit `Authorization` param to `saleorQuery` (111 call sites; currently sends NO auth header — root cause) — `src/mcp-server/saleor-client.ts:24-28`. Consider moving it to `src/lib/protocols/shared/`.
-- [ ] [LOW] Approval-status GET: verify `approval.agent_id === auth.agent.id` else 404 — `src/app/api/ucp/rest/approvals/[id]/route.ts`. CWE-639.
-- [ ] [TEST] Fix integration tests that currently codify IDOR as correct — `__tests__/.../orders.test.ts:73-87`.
+**Phase 3a — Order ownership (DONE, the crown-jewel IDOR: read any customer's PII + refund any order):**
+
+- [x] [HIGH] `saleorQuery` now takes an optional `{ authToken }` → `Authorization: Bearer` (root-cause enabler, backward compatible; all 111 existing 2-arg calls unaffected) — `src/mcp-server/saleor-client.ts`.
+- [x] [HIGH] New `src/lib/protocols/shared/ownership.ts` `ownsOrder(order, auth)` — case-insensitive `order.userEmail === userContext.email`; requires a customer (OAuth) context, so agent-only tokens never own a customer order.
+- [x] [HIGH] UCP `orders/[id]` GET — 404 unless `ownsOrder` (covers both non-owner and agent-only). CWE-639.
+- [x] [HIGH] UCP `orders/[id]/return` — ownership check (404) after fetch, BEFORE eligibility/refund, so no one can refund another customer's order.
+- [x] [TEST] `orders.test.ts` rewritten (was codifying IDOR): owner→200, different customer→404, agent-only→404, not-found→404. Added IDOR negative test to `orders-return.test.ts` (different customer→404, no refund mutation). Full suite 530/530.
+
+**Phase 3b — Cart/checkout + ACP ownership (TODO, entangled with Block 4):**
+
+- [ ] [HIGH] UCP carts/checkout: bind `agent_id` into checkout metadata at CREATE; on GET/PATCH/DELETE (`carts/[id]/route.ts`) and `checkout-sessions/[id]/complete/route.ts` require `metadata.ucp_agent_id === auth.agent.id` AND/OR (OAuth) `checkout.email === userContext.email`. Checkout query already exposes `email` + `metadata[]`. Needs: find/modify the cart-create route to write the binding; reject unbound carts (fail-closed; pre-existing carts become 404 — acceptable, short-lived).
+- [ ] [HIGH] ACP `orders/[id]` + `acp/checkout/[id]/complete`: **do together with Block 4** — ACP routes use the deprecated `validateAgentApiKey` and carry NO `userContext`, so there is nothing to compare until they're migrated onto the `withUcpRoute`/OAuth guard chain. Same `ownsOrder` helper applies once they have a customer context.
+- [ ] [LOW] Approval-status GET ownership (`approvals/[id]/route.ts`) — also legacy-auth; fold into Block 4 (compare `approval.agent_id` to the authenticated agent once it has a proper identity).
 
 ### BLOCK 4 — ACP onto guard chain + delete deprecated auth · size: **M/L**
 
