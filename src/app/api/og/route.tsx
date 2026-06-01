@@ -16,9 +16,13 @@ import { type NextRequest } from "next/server";
 export async function GET(request: NextRequest) {
 	const { searchParams } = request.nextUrl;
 
-	const title = searchParams.get("title") || "Saleor Store";
-	const subtitle = searchParams.get("subtitle") || "";
-	const price = searchParams.get("price") || "";
+	// SECURITY (DoS, CWE-400): public unauthenticated endpoint feeding satori
+	// layout/rasterization — clamp attacker-controlled text so huge inputs can't
+	// blow up CPU/memory.
+	const clamp = (s: string, max: number) => (s.length > max ? s.slice(0, max) : s);
+	const title = clamp(searchParams.get("title") || "Saleor Store", 120);
+	const subtitle = clamp(searchParams.get("subtitle") || "", 160);
+	const price = clamp(searchParams.get("price") || "", 40);
 
 	return new ImageResponse(
 		(

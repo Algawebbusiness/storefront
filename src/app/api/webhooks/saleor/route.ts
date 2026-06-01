@@ -17,7 +17,6 @@ import {
 import { notifyAgent } from "@/lib/protocols/shared/agent-webhooks";
 import { findPendingReturnForOrder, updateReturnStatus } from "@/lib/protocols/shared/return-mapper";
 
-const WEBHOOK_SECRET = process.env.SALEOR_WEBHOOK_SECRET;
 const SALEOR_API_URL = process.env.NEXT_PUBLIC_SALEOR_API_URL;
 const SALEOR_APP_TOKEN = process.env.SALEOR_APP_TOKEN;
 
@@ -160,6 +159,9 @@ function isKnownOrderEvent(event: string): event is OrderEvent {
 
 export async function POST(request: Request): Promise<Response> {
 	const rawBody = await request.text();
+
+	// Read at request time (not module load) so it picks up the runtime env.
+	const WEBHOOK_SECRET = process.env.SALEOR_WEBHOOK_SECRET;
 
 	// SECURITY: fail closed. Without a configured secret we cannot authenticate
 	// the sender, so we must reject rather than process attacker-controllable,

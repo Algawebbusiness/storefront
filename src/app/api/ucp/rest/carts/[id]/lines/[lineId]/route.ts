@@ -28,6 +28,9 @@ interface LineParams {
 	lineId: string;
 }
 
+/** Upper bound on a single cart line quantity (defense-in-depth / DoS, CWE-20). */
+const MAX_LINE_QUANTITY = 10_000;
+
 export const PATCH = withUcpRoute<LineParams>(
 	{
 		action: "cart.update_line",
@@ -45,12 +48,17 @@ export const PATCH = withUcpRoute<LineParams>(
 			);
 		}
 
-		if (typeof body.quantity !== "number" || body.quantity < 1) {
+		if (
+			typeof body.quantity !== "number" ||
+			!Number.isInteger(body.quantity) ||
+			body.quantity < 1 ||
+			body.quantity > MAX_LINE_QUANTITY
+		) {
 			return signedJsonResponse(
 				{
 					error: {
 						code: "bad_request",
-						message: "quantity must be a positive integer (use DELETE to remove a line)",
+						message: `quantity must be an integer between 1 and ${MAX_LINE_QUANTITY} (use DELETE to remove a line)`,
 					},
 				},
 				{ status: 400 },
@@ -63,10 +71,7 @@ export const PATCH = withUcpRoute<LineParams>(
 		});
 
 		if (!result.ok) {
-			return signedJsonResponse(
-				{ error: { code: "server_error", message: result.error } },
-				{ status: 500 },
-			);
+			return signedJsonResponse({ error: { code: "server_error", message: result.error } }, { status: 500 });
 		}
 
 		const data = result.data.checkoutLinesUpdate;
@@ -83,10 +88,7 @@ export const PATCH = withUcpRoute<LineParams>(
 		}
 
 		if (!data.checkout) {
-			return signedJsonResponse(
-				{ error: { code: "not_found", message: "Cart not found" } },
-				{ status: 404 },
-			);
+			return signedJsonResponse({ error: { code: "not_found", message: "Cart not found" } }, { status: 404 });
 		}
 
 		const ucpMeta = await buildUcpMeta(auth.profileUrl);
@@ -107,10 +109,7 @@ export const DELETE = withUcpRoute<LineParams>(
 		});
 
 		if (!result.ok) {
-			return signedJsonResponse(
-				{ error: { code: "server_error", message: result.error } },
-				{ status: 500 },
-			);
+			return signedJsonResponse({ error: { code: "server_error", message: result.error } }, { status: 500 });
 		}
 
 		const data = result.data.checkoutLinesDelete;
@@ -127,10 +126,7 @@ export const DELETE = withUcpRoute<LineParams>(
 		}
 
 		if (!data.checkout) {
-			return signedJsonResponse(
-				{ error: { code: "not_found", message: "Cart not found" } },
-				{ status: 404 },
-			);
+			return signedJsonResponse({ error: { code: "not_found", message: "Cart not found" } }, { status: 404 });
 		}
 
 		const ucpMeta = await buildUcpMeta(auth.profileUrl);

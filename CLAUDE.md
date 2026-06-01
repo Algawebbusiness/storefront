@@ -1320,13 +1320,16 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 15 — Low/Info hardening backlog · size: **S**
 
-- [ ] Pin caret-ranged deps to exact (`save-exact=true`) — `package.json:41-54,69-85`.
-- [ ] Cap OG param lengths + rate-limit `/api/og` — `og/route.tsx`. CWE-400.
-- [ ] `timingSafeEqual` on revalidate + cron secrets — `revalidate/route.ts:182-189`, `cron/abuse-scan/route.ts:90-95`. CWE-208.
-- [ ] Generic upstream error msg to callers — `saleor-client.ts:46`. CWE-209.
-- [ ] `Number.isInteger` + max on cart line quantity — `carts/[id]/lines/route.ts` + `lines/[lineId]/route.ts`. CWE-20.
-- [ ] Gate ephemeral signing key behind `UCP_ALLOW_EPHEMERAL_SIGNING` + `kid` rotation overlap — `signing.ts:115-134`.
-- [ ] Tighten tsconfig: `allowUnreachableCode:false`, `noUncheckedIndexedAccess:true`.
+- [x] Cap OG param lengths (title 120 / subtitle 160 / price 40) — `og/route.tsx`. CWE-400. (Rate-limiting `/api/og` deferred to Block 10's shared limiter.)
+- [x] `timingSafeEqual` on revalidate + cron secrets — new `src/lib/timing-safe-equal.ts` (`timingSafeEqualStr`, sha256-then-compare = constant-time + length-safe); wired into `revalidate/route.ts` + `cron/abuse-scan/route.ts`. CWE-208.
+- [x] Generic upstream error msg to callers (log details server-side) — `saleor-client.ts`. CWE-209.
+- [x] `Number.isInteger` + max (10 000) on cart line quantity — both `carts/[id]/lines/route.ts` and `lines/[lineId]/route.ts`. CWE-20.
+- [x] Tighten tsconfig: `allowUnreachableCode:false` (tsc clean).
+- [ ] [DEFERRED] `noUncheckedIndexedAccess:true` — would surface many errors across ~120k LOC; treat as its own typed-hardening task, not a quick win.
+- [ ] [DEFERRED] Pin caret-ranged deps to exact — `package.json`. Low value (lockfile already pins + 24h minimumReleaseAge); needs lockfile regen. Do as a deliberate dep-hygiene pass.
+- [ ] [DEFERRED] Gate ephemeral signing key behind `UCP_ALLOW_EPHEMERAL_SIGNING` + `kid` rotation — `signing.ts`. Prod already throws; gating dev/test ephemeral would break the test suite (relies on ephemeral keypair) without extra setup. INFO; revisit with signing-key rotation work.
+
+> Side effect of Block 15: the Saleor webhook now reads `SALEOR_WEBHOOK_SECRET` at request time (was module-load), fixing a latent staleness bug and making the Block 0 fail-closed testable. `saleor-returns.test.ts` updated to send a valid HMAC signature. Full suite: 527/527 green.
 
 ### Dependency notes
 

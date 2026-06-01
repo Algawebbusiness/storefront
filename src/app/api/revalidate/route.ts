@@ -2,6 +2,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { NextRequest } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { DefaultChannelSlug } from "@/app/config";
+import { timingSafeEqualStr } from "@/lib/timing-safe-equal";
 
 /**
  * Webhook endpoint for cache invalidation.
@@ -180,9 +181,10 @@ export async function POST(request: NextRequest) {
 	const signature = request.headers.get("saleor-signature");
 
 	if (!verifyWebhookSignature(rawBody, signature)) {
-		// Fallback to static secret for manual testing
+		// Fallback to static secret for manual testing (constant-time compare).
 		const staticSecret = request.headers.get("x-revalidate-secret");
-		if (staticSecret !== process.env.REVALIDATE_SECRET || !process.env.REVALIDATE_SECRET) {
+		const expected = process.env.REVALIDATE_SECRET;
+		if (!expected || !staticSecret || !timingSafeEqualStr(staticSecret, expected)) {
 			console.warn("[Revalidate] Invalid signature or secret");
 			return Response.json({ error: "Unauthorized" }, { status: 401 });
 		}
