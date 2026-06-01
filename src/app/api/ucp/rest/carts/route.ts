@@ -27,6 +27,7 @@ import {
 	type UpdateMetadataData,
 } from "@/lib/protocols/shared/checkout-queries";
 import { contextToMetadataInput, validateContext } from "@/lib/protocols/shared/context-mapper";
+import { agentBindingMetadataItem } from "@/lib/protocols/shared/ownership";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
 import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import type { UcpContext } from "@/lib/protocols/shared/types";
@@ -43,93 +44,90 @@ interface CreateCartBody {
 	context?: UcpContext;
 }
 
-export const POST = withUcpRoute(
-	{ action: "cart.create", scope: "cart.create" },
-	async (_request, auth) => {
-		let body: CreateCartBody = {};
-		if (auth.bodyText.length > 0) {
-			try {
-				body = JSON.parse(auth.bodyText) as CreateCartBody;
-			} catch {
-				return signedJsonResponse(
-					{ error: { code: "bad_request", message: "Invalid JSON body" } },
-					{ status: 400 },
-				);
-			}
-		}
-
-		const contextValidation = validateContext(body.context);
-		if (!contextValidation.ok) {
+export const POST = withUcpRoute({ action: "cart.create", scope: "cart.create" }, async (_request, auth) => {
+	let body: CreateCartBody = {};
+	if (auth.bodyText.length > 0) {
+		try {
+			body = JSON.parse(auth.bodyText) as CreateCartBody;
+		} catch {
 			return signedJsonResponse(
-				{
-					error: {
-						code: "bad_request",
-						message: contextValidation.errors.map((e) => `${e.field}: ${e.message}`).join("; "),
-					},
-				},
+				{ error: { code: "bad_request", message: "Invalid JSON body" } },
 				{ status: 400 },
 			);
 		}
+	}
 
-		const lines = (body.lines ?? []).map((l) => ({
-			variantId: l.variant_id,
-			quantity: l.quantity,
-		}));
+	const contextValidation = validateContext(body.context);
+	if (!contextValidation.ok) {
+		return signedJsonResponse(
+			{
+				error: {
+					code: "bad_request",
+					message: contextValidation.errors.map((e) => `${e.field}: ${e.message}`).join("; "),
+				},
+			},
+			{ status: 400 },
+		);
+	}
 
-		const channel = getDefaultChannel();
-		const result = await saleorQuery<CheckoutCreateData>(CHECKOUT_CREATE_MUTATION, {
-			input: { channel, lines },
+	const lines = (body.lines ?? []).map((l) => ({
+		variantId: l.variant_id,
+		quantity: l.quantity,
+	}));
+
+	const channel = getDefaultChannel();
+	const result = await saleorQuery<CheckoutCreateData>(CHECKOUT_CREATE_MUTATION, {
+		input: { channel, lines },
+	});
+
+	if (!result.ok) {
+		return signedJsonResponse({ error: { code: "server_error", message: result.error } }, { status: 500 });
+	}
+
+	const data = result.data.checkoutCreate;
+	if (data.errors.length > 0) {
+		return signedJsonResponse(
+			{
+				error: {
+					code: "bad_request",
+					message: data.errors.map((e) => e.message).join("; "),
+				},
+			},
+			{ status: 400 },
+		);
+	}
+
+	if (!data.checkout) {
+		return signedJsonResponse(
+			{ error: { code: "server_error", message: "Cart creation returned no data" } },
+			{ status: 500 },
+		);
+	}
+
+	let checkout = data.checkout;
+
+	// SECURITY (IDOR, CWE-639): always bind the cart to the creating agent so
+	// a different agent can't drive it by guessing its ID. Also persist agent
+	// context metadata when provided.
+	const contextMetadata = contextToMetadataInput(body.context, contextValidation.buyerPreferencesJson);
+	const metadataInput = [agentBindingMetadataItem(auth.agent.id), ...(contextMetadata ?? [])];
+	{
+		const metaResult = await saleorQuery<UpdateMetadataData>(UPDATE_METADATA_MUTATION, {
+			id: checkout.id,
+			input: metadataInput,
 		});
-
-		if (!result.ok) {
+		if (!metaResult.ok) {
 			return signedJsonResponse(
-				{ error: { code: "server_error", message: result.error } },
+				{ error: { code: "server_error", message: metaResult.error } },
 				{ status: 500 },
 			);
 		}
-
-		const data = result.data.checkoutCreate;
-		if (data.errors.length > 0) {
-			return signedJsonResponse(
-				{
-					error: {
-						code: "bad_request",
-						message: data.errors.map((e) => e.message).join("; "),
-					},
-				},
-				{ status: 400 },
-			);
+		const refetch = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id: checkout.id });
+		if (refetch.ok && refetch.data.checkout) {
+			checkout = refetch.data.checkout;
 		}
+	}
 
-		if (!data.checkout) {
-			return signedJsonResponse(
-				{ error: { code: "server_error", message: "Cart creation returned no data" } },
-				{ status: 500 },
-			);
-		}
-
-		let checkout = data.checkout;
-
-		// Persist context to Saleor metadata if provided.
-		const metadataInput = contextToMetadataInput(body.context, contextValidation.buyerPreferencesJson);
-		if (metadataInput) {
-			const metaResult = await saleorQuery<UpdateMetadataData>(UPDATE_METADATA_MUTATION, {
-				id: checkout.id,
-				input: metadataInput,
-			});
-			if (!metaResult.ok) {
-				return signedJsonResponse(
-					{ error: { code: "server_error", message: metaResult.error } },
-					{ status: 500 },
-				);
-			}
-			const refetch = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id: checkout.id });
-			if (refetch.ok && refetch.data.checkout) {
-				checkout = refetch.data.checkout;
-			}
-		}
-
-		const ucpMeta = await buildUcpMeta(auth.profileUrl);
-		return signedJsonResponse({ ucp: ucpMeta, cart: mapCheckoutToCart(checkout) }, { status: 201 });
-	},
-);
+	const ucpMeta = await buildUcpMeta(auth.profileUrl);
+	return signedJsonResponse({ ucp: ucpMeta, cart: mapCheckoutToCart(checkout) }, { status: 201 });
+});

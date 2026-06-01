@@ -80,6 +80,9 @@ describe("POST /api/ucp/rest/checkout-sessions (integration)", () => {
 			ok: true,
 			data: { checkoutCreate: { checkout: fakeCheckout(100), errors: [] } },
 		});
+		// Agent-binding metadata write + refetch (IDOR defense).
+		mockSaleorQuery.mockResolvedValueOnce({ ok: true, data: { updateMetadata: { errors: [] } } });
+		mockSaleorQuery.mockResolvedValueOnce({ ok: true, data: { checkout: fakeCheckout(100) } });
 
 		const res = await createCheckout(
 			new Request("https://store.example/api/ucp/rest/checkout-sessions", {
@@ -94,7 +97,7 @@ describe("POST /api/ucp/rest/checkout-sessions (integration)", () => {
 		expect(res.status).toBe(201);
 		const body = (await res.json()) as { checkout_session: { id: string } };
 		expect(body.checkout_session.id).toBe("co_1");
-		expect(mockSaleorQuery).toHaveBeenCalledTimes(1);
+		expect(mockSaleorQuery).toHaveBeenCalledTimes(3);
 	});
 });
 
@@ -142,7 +145,11 @@ describe("POST /api/ucp/rest/checkout-sessions/[id]/complete (integration)", () 
 	});
 
 	it("completes the checkout when under cap and payment succeeds", async () => {
-		const cheap = fakeCheckout(50);
+		// Bound to the dev legacy-bearer agent so the ownership check passes.
+		const cheap = {
+			...fakeCheckout(50),
+			metadata: [{ key: "ucp.agent_id", value: "legacy-bearer:anonymous" }],
+		};
 
 		// Order of saleorQuery calls inside the handler:
 		//   1. computeAmountCents → CHECKOUT_BY_ID_QUERY

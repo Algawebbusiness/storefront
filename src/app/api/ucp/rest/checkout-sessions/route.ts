@@ -27,6 +27,7 @@ import {
 	type UpdateMetadataData,
 } from "@/lib/protocols/shared/checkout-queries";
 import { contextToMetadataInput, validateContext } from "@/lib/protocols/shared/context-mapper";
+import { agentBindingMetadataItem } from "@/lib/protocols/shared/ownership";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
 import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import type { ProtocolAddress, UcpContext } from "@/lib/protocols/shared/types";
@@ -161,9 +162,12 @@ export const POST = withUcpRoute(
 			}
 		}
 
-		// Persist agent context to Saleor metadata if provided (Phase A7).
-		const metadataInput = contextToMetadataInput(body.context, contextValidation.buyerPreferencesJson);
-		if (metadataInput) {
+		// SECURITY (IDOR, CWE-639): always bind the checkout to the creating agent
+		// so a different agent can't complete/read it by guessing its ID. Also
+		// persist agent context metadata when provided (Phase A7).
+		const contextMetadata = contextToMetadataInput(body.context, contextValidation.buyerPreferencesJson);
+		const metadataInput = [agentBindingMetadataItem(auth.agent.id), ...(contextMetadata ?? [])];
+		{
 			const metaResult = await saleorQuery<UpdateMetadataData>(UPDATE_METADATA_MUTATION, {
 				id: checkout.id,
 				input: metadataInput,

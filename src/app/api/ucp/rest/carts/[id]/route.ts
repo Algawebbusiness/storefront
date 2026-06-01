@@ -16,6 +16,7 @@ import {
 	type UpdateMetadataData,
 } from "@/lib/protocols/shared/checkout-queries";
 import { contextToMetadataInput, validateContext } from "@/lib/protocols/shared/context-mapper";
+import { ownsCheckout } from "@/lib/protocols/shared/ownership";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
 import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import type { UcpContext } from "@/lib/protocols/shared/types";
@@ -40,16 +41,11 @@ export const GET = withUcpRoute<CartParams>(
 		const result = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
 
 		if (!result.ok) {
-			return signedJsonResponse(
-				{ error: { code: "server_error", message: result.error } },
-				{ status: 500 },
-			);
+			return signedJsonResponse({ error: { code: "server_error", message: result.error } }, { status: 500 });
 		}
-		if (!result.data.checkout) {
-			return signedJsonResponse(
-				{ error: { code: "not_found", message: "Cart not found" } },
-				{ status: 404 },
-			);
+		if (!result.data.checkout || !ownsCheckout(result.data.checkout, auth)) {
+			// 404 (not 403) so a non-owner can't confirm the cart exists (CWE-639).
+			return signedJsonResponse({ error: { code: "not_found", message: "Cart not found" } }, { status: 404 });
 		}
 
 		const ucpMeta = await buildUcpMeta(auth.profileUrl);
@@ -97,11 +93,8 @@ export const PATCH = withUcpRoute<CartParams>(
 				{ status: 500 },
 			);
 		}
-		if (!fetchResult.data.checkout) {
-			return signedJsonResponse(
-				{ error: { code: "not_found", message: "Cart not found" } },
-				{ status: 404 },
-			);
+		if (!fetchResult.data.checkout || !ownsCheckout(fetchResult.data.checkout, auth)) {
+			return signedJsonResponse({ error: { code: "not_found", message: "Cart not found" } }, { status: 404 });
 		}
 
 		const metadataInput = contextToMetadataInput(body.context, contextValidation.buyerPreferencesJson);
@@ -149,16 +142,10 @@ export const DELETE = withUcpRoute<CartParams>(
 		const result = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
 
 		if (!result.ok) {
-			return signedJsonResponse(
-				{ error: { code: "server_error", message: result.error } },
-				{ status: 500 },
-			);
+			return signedJsonResponse({ error: { code: "server_error", message: result.error } }, { status: 500 });
 		}
-		if (!result.data.checkout) {
-			return signedJsonResponse(
-				{ error: { code: "not_found", message: "Cart not found" } },
-				{ status: 404 },
-			);
+		if (!result.data.checkout || !ownsCheckout(result.data.checkout, auth)) {
+			return signedJsonResponse({ error: { code: "not_found", message: "Cart not found" } }, { status: 404 });
 		}
 
 		const ucpMeta = await buildUcpMeta(auth.profileUrl);

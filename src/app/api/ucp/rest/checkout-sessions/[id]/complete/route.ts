@@ -15,11 +15,7 @@
  * *before* any Saleor mutation or Stripe charge runs.
  */
 
-import {
-	buildApprovalUrl,
-	createPendingApproval,
-	requiresApproval,
-} from "@/lib/protocols/shared/approvals";
+import { buildApprovalUrl, createPendingApproval, requiresApproval } from "@/lib/protocols/shared/approvals";
 import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
 import {
 	CHECKOUT_BY_ID_QUERY,
@@ -27,6 +23,7 @@ import {
 	type CheckoutByIdData,
 	type CheckoutCompleteData,
 } from "@/lib/protocols/shared/checkout-queries";
+import { ownsCheckout } from "@/lib/protocols/shared/ownership";
 import { processStripePayment, type StripePaymentMethod } from "@/lib/protocols/shared/payment";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
 import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
@@ -107,7 +104,9 @@ export const POST = withUcpRoute<CheckoutParams>(
 				{ status: 500 },
 			);
 		}
-		if (!fetchResult.data.checkout) {
+		if (!fetchResult.data.checkout || !ownsCheckout(fetchResult.data.checkout, auth)) {
+			// SECURITY (IDOR, CWE-639): only the owning agent/customer may complete
+			// (charge) this checkout. 404 to a non-owner so existence isn't leaked.
 			return signedJsonResponse(
 				{ error: { code: "not_found", message: "Checkout session not found" } },
 				{ status: 404 },
