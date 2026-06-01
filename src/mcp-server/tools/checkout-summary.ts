@@ -22,22 +22,14 @@ import {
 import { registerToolPair, pairedAppToolName } from "../apps/paired-tools";
 import { wrapAsData } from "../apps/sanitize";
 import { saleorQuery, getDefaultChannel } from "../saleor-client";
+import { isMcpApiKeyAuthorized } from "./api-key-auth";
 import { CHECKOUT_BY_ID_QUERY, type CheckoutByIdData } from "@/lib/protocols/shared/checkout-queries";
 
 const RESOURCE_URI = APP_RESOURCES.checkoutSummary.uri;
 const KIND = "checkout-summary";
 
 function validateOptionalApiKey(apiKey: string | undefined) {
-	if (apiKey === undefined) return null;
-	const keys = process.env.AGENT_API_KEYS || "";
-	const validKeys = new Set(
-		keys
-			.split(",")
-			.map((k) => k.trim())
-			.filter(Boolean),
-	);
-	if (validKeys.size === 0) return null;
-	if (validKeys.has(apiKey)) return null;
+	if (isMcpApiKeyAuthorized(apiKey)) return null;
 	return {
 		content: [{ type: "text" as const, text: JSON.stringify({ error: "Invalid or missing api_key" }) }],
 	};

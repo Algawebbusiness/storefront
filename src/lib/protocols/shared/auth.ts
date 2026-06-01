@@ -36,14 +36,7 @@ export const SYNTHETIC_LEGACY_AGENT: AgentIdentity = {
 	platform: "custom",
 	status: "active",
 	public_key: "",
-	scope: [
-		"catalog.read",
-		"cart.create",
-		"cart.update",
-		"checkout.create",
-		"checkout.complete",
-		"order.read",
-	],
+	scope: ["catalog.read", "cart.create", "cart.update", "checkout.create", "checkout.complete", "order.read"],
 	spending_limit: { per_session_cents: 10_000_00, per_day_cents: null, per_month_cents: null },
 	rate_limit: { requests_per_minute: 30, sessions_per_day: 1000 },
 	created_at: "2026-05-01T00:00:00Z",
@@ -144,6 +137,7 @@ export function validateAgentApiKey(request: Request): AgentAuthResult {
 	}
 
 	if (validKeys.size === 0) {
+		if (!legacyAnonymousAllowed()) return { valid: false };
 		return { valid: true, agentId: "anonymous" };
 	}
 
@@ -275,11 +269,7 @@ async function verifyOAuthBearer(
 	};
 }
 
-function verifyLegacyBearer(
-	token: string,
-	request: Request,
-	bodyText: string,
-): AgentAuthOutcome {
+function verifyLegacyBearer(token: string, request: Request, bodyText: string): AgentAuthOutcome {
 	const validKeys = getValidApiKeys();
 	const acpKey = process.env.ACP_API_KEY;
 
@@ -289,7 +279,13 @@ function verifyLegacyBearer(
 	}
 
 	if (validKeys.size === 0) {
-		// Dev mode: no keys configured, accept anyone (preserves legacy behaviour).
+		// SECURITY (CWE-1188): no AGENT_API_KEYS configured. Permissive only in
+		// dev/test (or explicit opt-in); in production fail closed so a deploy
+		// that forgot to configure auth doesn't accept everyone as a full-scope
+		// agent with a $10k spending cap.
+		if (!legacyAnonymousAllowed()) {
+			return { ok: false, status: 401, reason: "Agent authentication is not configured" };
+		}
 		return acceptLegacy(request, bodyText, "anonymous");
 	}
 
@@ -344,6 +340,16 @@ function getValidApiKeys(): Set<string> {
 			.map((k) => k.trim())
 			.filter(Boolean),
 	);
+}
+
+/**
+ * Whether the empty-`AGENT_API_KEYS` legacy bearer fallback may accept callers.
+ * Permissive in dev/test; in production requires an explicit
+ * `UCP_ALLOW_ANONYMOUS_LEGACY=true` opt-in so an unconfigured deploy fails
+ * closed instead of granting full-scope access to anyone (CWE-1188).
+ */
+function legacyAnonymousAllowed(): boolean {
+	return process.env.NODE_ENV !== "production" || process.env.UCP_ALLOW_ANONYMOUS_LEGACY === "true";
 }
 
 function validateOAuthToken(token: string, request: Request): AgentAuthResult {

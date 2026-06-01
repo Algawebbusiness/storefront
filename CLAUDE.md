@@ -1227,18 +1227,18 @@ pnpm run build            # Produkční build
 
 ### ⏳ Progress (remediation branch `security-hardening`, pushed to GitHub origin)
 
-| Block                | Scope                                                                                                | Status                                                     |
-| -------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| 0                    | Config hardening (image proxy, headers, webhook fail-close, CI gate, cookie)                         | ✅ done                                                    |
-| 1                    | Stored XSS — escape JSON-LD (8 call sites)                                                           | ✅ done (strict CSP deferred — `cacheComponents` conflict) |
-| 7                    | SSRF guard on `webhook_url` (+18 tests)                                                              | ✅ done (DNS-rebinding residual)                           |
-| 15                   | Low/Info hardening batch                                                                             | ✅ done (3 items deferred)                                 |
-| 3a                   | **Order IDOR** — ownership on order read + return/refund                                             | ✅ done                                                    |
-| 3b                   | Cart/checkout agent-binding + ACP/approvals ownership                                                | ⏳ TODO (entangled w/ Block 4)                             |
-| 2                    | Auth fail-closed defaults (`validateApiKey`, `/mcp` tools, `AGENT_API_KEYS`)                         | ⏳ TODO                                                    |
-| 4                    | ACP → guard chain + delete deprecated auth                                                           | ⏳ TODO (unlocks 3b for ACP)                               |
-| 9                    | Durable store (Redis/DB) — INFRA                                                                     | ⏳ TODO (foundation for 5/6/8/10)                          |
-| 5,6,8,10,11,12,13,14 | signing replay, JWT token leak, idempotency, rate-limit, scope, JWT correctness, perf, quality/tests | ⏳ TODO                                                    |
+| Block                | Scope                                                                                                | Status                                                              |
+| -------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| 0                    | Config hardening (image proxy, headers, webhook fail-close, CI gate, cookie)                         | ✅ done                                                             |
+| 1                    | Stored XSS — escape JSON-LD (8 call sites)                                                           | ✅ done (strict CSP deferred — `cacheComponents` conflict)          |
+| 7                    | SSRF guard on `webhook_url` (+18 tests)                                                              | ✅ done (DNS-rebinding residual)                                    |
+| 15                   | Low/Info hardening batch                                                                             | ✅ done (3 items deferred)                                          |
+| 3a                   | **Order IDOR** — ownership on order read + return/refund                                             | ✅ done                                                             |
+| 3b                   | Cart/checkout agent-binding + ACP/approvals ownership                                                | ⏳ TODO (entangled w/ Block 4)                                      |
+| 2                    | Auth fail-closed defaults (`validateApiKey`, `AGENT_API_KEYS`)                                       | ✅ done (prod fail-closed; public `/mcp` tool split deferred to 3b) |
+| 4                    | ACP → guard chain + delete deprecated auth                                                           | ⏳ TODO (unlocks 3b for ACP)                                        |
+| 9                    | Durable store (Redis/DB) — INFRA                                                                     | ⏳ TODO (foundation for 5/6/8/10)                                   |
+| 5,6,8,10,11,12,13,14 | signing replay, JWT token leak, idempotency, rate-limit, scope, JWT correctness, perf, quality/tests | ⏳ TODO                                                             |
 
 **Closed so far:** 5 HIGH (SSRF webhook_url, stored XSS, open image proxy, webhook fail-open, order IDOR) + many Med/Low/Info. Full test suite green throughout (530/530); every block committed separately.
 
@@ -1266,9 +1266,10 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 2 — Auth fail-closed defaults · size: **M** · touches auth core
 
-- [ ] [HIGH] `validateApiKey(undefined)` must return `false` (currently returns `true` = "trust transport") and empty-keys set must NOT auto-trust — copies in `src/mcp-server/tools/*.ts` + `auth.ts` (dedup in Block 14). CWE-306.
-- [ ] [HIGH] Stop registering payment/PII/mutating tools (`complete_checkout`/`create`/`update_checkout`, `get_order_full`/`get_cart_full`) on the PUBLIC `/mcp` transport — split into public-read-only vs authenticated server, or gate `/mcp` with `verifyAgentRequest` — `src/app/mcp/route.ts:14-44`, `src/mcp-server/index.ts:46`. CWE-862.
-- [ ] [HIGH] Fail closed when `AGENT_API_KEYS`/signing registry both unset in prod (currently → full-scope `SYNTHETIC_LEGACY_AGENT`, $10k cap). Give synthetic anonymous identity empty scope + zero cap; require explicit dev flag — `src/lib/protocols/shared/auth.ts:33-51,146-148,291-294`. CWE-1188.
+- [x] [HIGH] MCP `validateApiKey` fail-closed — new shared `src/mcp-server/tools/api-key-auth.ts` `isMcpApiKeyAuthorized` (also dedups the 5 copies → partial Block 14). `undefined` ("trust transport") and empty `AGENT_API_KEYS` are honored ONLY in dev/test or with `MCP_TRUST_TRANSPORT=true`; in production they fail closed. Wired into `checkout.ts` (validateApiKey) + `cart-preview.ts`/`order-receipt.ts`/`checkout-summary.ts` (validateOptionalApiKey). CWE-306/862. **6 unit tests.**
+- [x] [HIGH] `AGENT_API_KEYS` empty → production fail-closed in `auth.ts`: `verifyLegacyBearer` + `validateAgentApiKey` now reject (401/invalid) when no keys configured in production, unless `UCP_ALLOW_ANONYMOUS_LEGACY=true`. Dev/test keep legacy permissive behavior (so the dev-mode `legacy-bearer:anonymous` scope contract — relied on by route-handler/cart/checkout tests — is unchanged). CWE-1188. **2 unit tests.**
+- [ ] [PARTIAL] Synthetic anonymous "empty scope + zero cap": NOT applied to dev mode — `route-handler.test.ts`/carts/checkout-sessions rely on dev anonymous having legacy scope (`cart.create` etc.). Production now rejects outright (above), which closes the deploy-time risk. Giving dev anonymous empty scope is a separate test-contract change; deferred.
+- [ ] [DEFERRED → Block 3b/4] Stop registering payment/PII tools on the public `/mcp`, or gate `/mcp` with `verifyAgentRequest`. Mitigated now by the fail-closed `isMcpApiKeyAuthorized` (those tools refuse unauthenticated calls in production); the structural split / transport-auth is the proper fix. `/mcp/route.ts` comment + TODO updated. CWE-862.
 
 ### BLOCK 3 — IDOR / object ownership (THE big one) · size: **L** · most dangerous finding
 

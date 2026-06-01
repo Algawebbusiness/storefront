@@ -34,11 +34,7 @@ function setRegistry(entries: AgentIdentity[]): void {
 	vi.stubEnv("PAYLOAD_API_URL", "");
 }
 
-function makeRequest(opts: {
-	method?: string;
-	body?: string;
-	headers?: Record<string, string>;
-}): Request {
+function makeRequest(opts: { method?: string; body?: string; headers?: Record<string, string> }): Request {
 	return new Request("https://store.example/api/ucp/rest/test", {
 		method: opts.method ?? "POST",
 		body: opts.body,
@@ -121,9 +117,7 @@ describe("verifyAgentRequest — signed request path", () => {
 	});
 
 	it("returns 403 when agent is suspended (vs 401 for unknown)", async () => {
-		setRegistry([
-			makeAgent({ id: "naughty", public_key: publicKeyBase64, status: "suspended" }),
-		]);
+		setRegistry([makeAgent({ id: "naughty", public_key: publicKeyBase64, status: "suspended" })]);
 		const sig = await signPayload("{}");
 		const result = await verifyAgentRequest(
 			makeRequest({
@@ -250,6 +244,32 @@ describe("verifyAgentRequest — legacy bearer fallback (B9 dual-mode)", () => {
 
 		expect(result.ok).toBe(true);
 		if (result.ok) expect(result.agent.id).toBe("legacy-bearer:anonymous");
+	});
+
+	it("FAILS CLOSED in production when AGENT_API_KEYS is empty (CWE-1188)", async () => {
+		vi.stubEnv("AGENT_API_KEYS", "");
+		vi.stubEnv("AGENT_REGISTRY_JSON", "");
+		vi.stubEnv("NODE_ENV", "production");
+
+		const result = await verifyAgentRequest(
+			makeRequest({ body: "{}", headers: { Authorization: "Bearer dev-anything" } }),
+		);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.status).toBe(401);
+	});
+
+	it("honors UCP_ALLOW_ANONYMOUS_LEGACY=true escape hatch in production", async () => {
+		vi.stubEnv("AGENT_API_KEYS", "");
+		vi.stubEnv("AGENT_REGISTRY_JSON", "");
+		vi.stubEnv("NODE_ENV", "production");
+		vi.stubEnv("UCP_ALLOW_ANONYMOUS_LEGACY", "true");
+
+		const result = await verifyAgentRequest(
+			makeRequest({ body: "{}", headers: { Authorization: "Bearer dev-anything" } }),
+		);
+
+		expect(result.ok).toBe(true);
 	});
 });
 

@@ -11,7 +11,13 @@ import { createMcpServer } from "@/mcp-server";
  * GET  /mcp — SSE stream for server-initiated notifications
  * DELETE /mcp — Session termination (no-op in stateless mode)
  *
- * This is a public, read-only endpoint. No authentication required.
+ * The transport itself is unauthenticated. The browse/search tools are public
+ * read-only; money-moving (checkout) and PII (order/cart-full) tools enforce
+ * api_key auth via the shared, fail-closed `isMcpApiKeyAuthorized`, which in
+ * production refuses the "trust transport" shortcut unless an operator puts
+ * real auth in front of `/mcp` and sets `MCP_TRUST_TRANSPORT=true`.
+ * TODO (Block 3b): bind tool access to a verified agent identity / split the
+ * public read-only server from the authenticated checkout server.
  */
 
 async function handleMcpRequest(request: Request): Promise<Response> {

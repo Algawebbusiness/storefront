@@ -35,6 +35,7 @@ import { mapCheckoutToCartPreview, mapCheckoutToCartPreviewFull } from "../apps/
 import { registerToolPair, pairedAppToolName } from "../apps/paired-tools";
 import { wrapAsData } from "../apps/sanitize";
 import { saleorQuery, getDefaultChannel } from "../saleor-client";
+import { isMcpApiKeyAuthorized } from "./api-key-auth";
 import {
 	CHECKOUT_BY_ID_QUERY,
 	CHECKOUT_LINES_UPDATE_MUTATION,
@@ -48,26 +49,13 @@ const RESOURCE_URI = APP_RESOURCES.cartPreview.uri;
 const KIND = "cart-preview";
 
 /**
- * Validate `api_key` when supplied. Mirrors the contract in
- * `tools/checkout.ts`: empty `AGENT_API_KEYS` env = auth disabled
- * (development mode), otherwise the supplied key must appear in the set.
- *
- * Returns `null` when auth passes (or is bypassed); returns a tool
- * response payload when auth fails.
+ * Validate `api_key` via the shared fail-closed `isMcpApiKeyAuthorized`.
+ * Returns `null` when auth passes; a tool error payload when it fails.
  */
 function validateOptionalApiKey(apiKey: string | undefined): null | {
 	content: [{ type: "text"; text: string }];
 } {
-	if (apiKey === undefined) return null;
-	const keys = process.env.AGENT_API_KEYS || "";
-	const validKeys = new Set(
-		keys
-			.split(",")
-			.map((k) => k.trim())
-			.filter(Boolean),
-	);
-	if (validKeys.size === 0) return null;
-	if (validKeys.has(apiKey)) return null;
+	if (isMcpApiKeyAuthorized(apiKey)) return null;
 	return {
 		content: [{ type: "text", text: JSON.stringify({ error: "Invalid or missing api_key" }) }],
 	};

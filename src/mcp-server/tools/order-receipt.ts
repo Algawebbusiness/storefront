@@ -18,22 +18,14 @@ import { mapOrderToOrderReceipt, mapOrderToOrderReceiptFull } from "../apps/orde
 import { registerToolPair, pairedAppToolName } from "../apps/paired-tools";
 import { wrapAsData } from "../apps/sanitize";
 import { saleorQuery } from "../saleor-client";
+import { isMcpApiKeyAuthorized } from "./api-key-auth";
 import { ORDER_BY_ID_QUERY, type OrderByIdData } from "@/lib/protocols/shared/order-queries";
 
 const RESOURCE_URI = APP_RESOURCES.orderReceipt.uri;
 const KIND = "order-receipt";
 
 function validateOptionalApiKey(apiKey: string | undefined) {
-	if (apiKey === undefined) return null;
-	const keys = process.env.AGENT_API_KEYS || "";
-	const validKeys = new Set(
-		keys
-			.split(",")
-			.map((k) => k.trim())
-			.filter(Boolean),
-	);
-	if (validKeys.size === 0) return null;
-	if (validKeys.has(apiKey)) return null;
+	if (isMcpApiKeyAuthorized(apiKey)) return null;
 	return {
 		content: [{ type: "text" as const, text: JSON.stringify({ error: "Invalid or missing api_key" }) }],
 	};
