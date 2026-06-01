@@ -15,10 +15,7 @@ import {
 	type SaleorMetadataItem,
 } from "@/lib/protocols/shared/context-mapper";
 import { notifyAgent } from "@/lib/protocols/shared/agent-webhooks";
-import {
-	findPendingReturnForOrder,
-	updateReturnStatus,
-} from "@/lib/protocols/shared/return-mapper";
+import { findPendingReturnForOrder, updateReturnStatus } from "@/lib/protocols/shared/return-mapper";
 
 const WEBHOOK_SECRET = process.env.SALEOR_WEBHOOK_SECRET;
 const SALEOR_API_URL = process.env.NEXT_PUBLIC_SALEOR_API_URL;
@@ -34,9 +31,7 @@ const SALEOR_APP_TOKEN = process.env.SALEOR_APP_TOKEN;
  */
 async function propagateIntentToOrder(orderId: string): Promise<void> {
 	if (!SALEOR_API_URL || !SALEOR_APP_TOKEN) {
-		console.log(
-			"[Webhook/Saleor] Intent propagation skipped: SALEOR_API_URL or SALEOR_APP_TOKEN not set",
-		);
+		console.log("[Webhook/Saleor] Intent propagation skipped: SALEOR_API_URL or SALEOR_APP_TOKEN not set");
 		return;
 	}
 
@@ -102,7 +97,9 @@ async function propagateIntentToOrder(orderId: string): Promise<void> {
 	const written = await adminFetch<WriteData>(writeMetadataMutation, { id: orderId, input });
 	if (!written || written.updateMetadata.errors.length > 0) {
 		console.warn(
-			`[Webhook/Saleor] Intent propagation failed for order ${orderId}: ${written ? written.updateMetadata.errors.map((e) => e.message).join("; ") : "fetch error"}`,
+			`[Webhook/Saleor] Intent propagation failed for order ${orderId}: ${
+				written ? written.updateMetadata.errors.map((e) => e.message).join("; ") : "fetch error"
+			}`,
 		);
 		return;
 	}
@@ -164,40 +161,32 @@ function isKnownOrderEvent(event: string): event is OrderEvent {
 export async function POST(request: Request): Promise<Response> {
 	const rawBody = await request.text();
 
-	// Verify signature if secret is configured
-	if (WEBHOOK_SECRET) {
-		const signature = request.headers.get("Saleor-Signature");
-		if (!signature || !verifyWebhookSignature(rawBody, signature, WEBHOOK_SECRET)) {
-			console.warn("[Webhook/Saleor] Invalid or missing signature");
-			return Response.json(
-				{ error: "Unauthorized" },
-				{ status: 401 },
-			);
-		}
+	// SECURITY: fail closed. Without a configured secret we cannot authenticate
+	// the sender, so we must reject rather than process attacker-controllable,
+	// state-mutating events (ORDER_REFUNDED -> agent webhook/SSRF, ORDER_CREATED
+	// -> privileged MANAGE_ORDERS writes).
+	if (!WEBHOOK_SECRET) {
+		console.error("[Webhook/Saleor] SALEOR_WEBHOOK_SECRET is not configured; rejecting webhook");
+		return Response.json({ error: "Webhook not configured" }, { status: 503 });
+	}
+	const signature = request.headers.get("Saleor-Signature");
+	if (!signature || !verifyWebhookSignature(rawBody, signature, WEBHOOK_SECRET)) {
+		console.warn("[Webhook/Saleor] Invalid or missing signature");
+		return Response.json({ error: "Unauthorized" }, { status: 401 });
 	}
 
 	let payload: WebhookPayload;
 	try {
 		payload = JSON.parse(rawBody) as WebhookPayload;
 	} catch {
-		return Response.json(
-			{ error: "Invalid JSON" },
-			{ status: 400 },
-		);
+		return Response.json({ error: "Invalid JSON" }, { status: 400 });
 	}
 
 	// Extract event type from payload or header
-	const eventType = (
-		payload.event ??
-		request.headers.get("Saleor-Event") ??
-		""
-	).toUpperCase();
+	const eventType = (payload.event ?? request.headers.get("Saleor-Event") ?? "").toUpperCase();
 
 	if (!eventType) {
-		return Response.json(
-			{ error: "Missing event type" },
-			{ status: 400 },
-		);
+		return Response.json({ error: "Missing event type" }, { status: 400 });
 	}
 
 	// Extract order data (Saleor may nest it under payload.order or order directly)
@@ -217,9 +206,7 @@ export async function POST(request: Request): Promise<Response> {
 
 	switch (eventType) {
 		case "ORDER_CREATED":
-			console.log(
-				`[Webhook/Saleor] ORDER_CREATED — order #${safeOrderNumber} (${safeOrderId})`,
-			);
+			console.log(`[Webhook/Saleor] ORDER_CREATED — order #${safeOrderNumber} (${safeOrderId})`);
 			if (orderData?.id) {
 				await propagateIntentToOrder(orderData.id);
 			}
@@ -227,33 +214,31 @@ export async function POST(request: Request): Promise<Response> {
 
 		case "ORDER_FULFILLED":
 			console.log(
-				`[Webhook/Saleor] ORDER_FULFILLED — order #${safeOrderNumber} (${safeOrderId}) status: ${orderData?.status ?? "unknown"}`,
+				`[Webhook/Saleor] ORDER_FULFILLED — order #${safeOrderNumber} (${safeOrderId}) status: ${
+					orderData?.status ?? "unknown"
+				}`,
 			);
 			break;
 
 		case "ORDER_CANCELLED":
-			console.log(
-				`[Webhook/Saleor] ORDER_CANCELLED — order #${safeOrderNumber} (${safeOrderId})`,
-			);
+			console.log(`[Webhook/Saleor] ORDER_CANCELLED — order #${safeOrderNumber} (${safeOrderId})`);
 			break;
 
 		case "ORDER_PAID":
 			console.log(
-				`[Webhook/Saleor] ORDER_PAID — order #${safeOrderNumber} (${safeOrderId}) isPaid: ${orderData?.isPaid ?? "unknown"}`,
+				`[Webhook/Saleor] ORDER_PAID — order #${safeOrderNumber} (${safeOrderId}) isPaid: ${
+					orderData?.isPaid ?? "unknown"
+				}`,
 			);
 			break;
 
 		case "ORDER_REFUNDED":
-			console.log(
-				`[Webhook/Saleor] ORDER_REFUNDED — order #${safeOrderNumber} (${safeOrderId})`,
-			);
+			console.log(`[Webhook/Saleor] ORDER_REFUNDED — order #${safeOrderNumber} (${safeOrderId})`);
 			if (orderData?.id) {
 				const pending = findPendingReturnForOrder(orderData.id);
 				if (pending) {
 					const updated = updateReturnStatus(pending.id, "refunded");
-					console.log(
-						`[Webhook/Saleor] return ${pending.id} → refunded (order ${safeOrderId})`,
-					);
+					console.log(`[Webhook/Saleor] return ${pending.id} → refunded (order ${safeOrderId})`);
 					// C3: push status to the agent's webhook if one was registered.
 					// Best-effort, fire-and-forget — we never block the Saleor
 					// webhook response on outbound delivery.
@@ -280,9 +265,7 @@ export async function POST(request: Request): Promise<Response> {
 			// Surfaced when the merchant initiates a return from Saleor admin.
 			// We don't auto-create an agent return record (no agent context),
 			// but we log so the audit trail is complete.
-			console.log(
-				`[Webhook/Saleor] ORDER_RETURN_REQUESTED — order #${safeOrderNumber} (${safeOrderId})`,
-			);
+			console.log(`[Webhook/Saleor] ORDER_RETURN_REQUESTED — order #${safeOrderNumber} (${safeOrderId})`);
 			break;
 	}
 

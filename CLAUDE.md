@@ -1234,12 +1234,12 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 0 — Config hardening quick wins · size: **S** · no logic, low risk
 
-- [ ] Remove `{ hostname: "*" }` from `remotePatterns` (open image proxy / SSRF) — `next.config.js:19-34`. Gate behind `NODE_ENV==='development'` if needed.
-- [ ] Add security-headers `headers()` block: CSP (`default-src 'self'`, `script-src 'self'`+nonce, `frame-ancestors 'none'` on `/oauth/*`), HSTS (prod), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy` — `next.config.js:55-98`.
-- [ ] Saleor webhook fail-closed when `SALEOR_WEBHOOK_SECRET` unset (add missing `else` → 401) — `src/app/api/webhooks/saleor/route.ts:168-177`.
-- [ ] CI: `pnpm install --frozen-lockfile` + add a `pull_request`-triggered job running `tsc --noEmit`, lint, `test:run` as REQUIRED checks (today lint runs only post-deploy) — `.github/workflows/lint.yml:23-24`.
-- [ ] `poweredByHeader: false` — `next.config.js:6-106`. [INFO]
-- [ ] `NEXT_LOCALE` cookie `secure: NODE_ENV==='production'` — `src/middleware.ts:16-21`. [INFO]
+- [x] Remove `{ hostname: "*" }` from `remotePatterns` (open image proxy / SSRF) — `next.config.js`. Now dev-only (`NODE_ENV==='development'`); Saleor hosts pinned to `protocol: "https"`.
+- [x] Add security-headers `headers()` block: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`, HSTS (prod) — `next.config.js`. **NOTE: full CSP deferred to Block 1** (needs a per-request nonce for the inline JSON-LD `<script>` blocks). `frame-ancestors 'none'` is covered by `X-Frame-Options: DENY` globally (incl. `/oauth/*`).
+- [x] Saleor webhook fail-closed when `SALEOR_WEBHOOK_SECRET` unset (returns 503) — `src/app/api/webhooks/saleor/route.ts`.
+- [x] CI: `lint.yml` → `pnpm install --frozen-lockfile`; new `.github/workflows/ci.yml` on `pull_request`/`push:main` runs generate→`tsc --noEmit`→lint→`test:run`. **TODO (manual, GitHub UI): mark `CI / verify` as a required status check in branch protection.**
+- [x] `poweredByHeader: false` — `next.config.js`. [INFO]
+- [x] `NEXT_LOCALE` cookie `secure: NODE_ENV==='production'` — `src/middleware.ts`. [INFO]
 
 ### BLOCK 1 — Stored XSS in JSON-LD · size: **S/M**
 
