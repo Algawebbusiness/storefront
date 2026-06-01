@@ -1243,7 +1243,8 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 1 — Stored XSS in JSON-LD · size: **S/M**
 
-- [ ] [HIGH] Escape JSON-LD before `dangerouslySetInnerHTML` (`</script>` breakout). Centralize in one `JsonLdScript` helper using the existing escape from `src/mcp-server/apps/serve-html.ts:56` (`<`→`<`, `>`, `&`, U+2028/9). Route ALL call sites through it — `src/lib/seo/json-ld.ts:35-139,242`; PDP `products/[slug]/page.tsx:170-180`; `categories/[slug]:98`; `collections/[slug]:98`; `blog/[slug]:66`; `(main)/page.tsx:58,64`. CWE-79.
+- [x] [HIGH] Escape JSON-LD before `dangerouslySetInnerHTML` (`</script>` breakout). Added `serializeJsonLd()` (escapes `<`/`>`/`&`/U+2028/U+2029) + `<JsonLdScript>` component in `src/lib/seo/`; `jsonLdScriptProps` now also escapes. Routed ALL 8 call sites through `<JsonLdScript>` (home ×2, products ×2, categories, collections, blog list, blog detail). Verified no raw `application/ld+json` `JSON.stringify` remains in `src/app`; tsc clean. CWE-79.
+- [ ] [DEFERRED] Full strict CSP (`script-src` nonce) — **NOT added in Block 1.** Rationale: a per-request nonce forces dynamic rendering and conflicts with this app's `cacheComponents: true` (PPR) caching model. The stored-XSS finding is already fully closed by the escaping above; CSP would be defense-in-depth. Decide deliberately in a dedicated task (either drop a nonce-CSP, use a hash-based CSP, or accept the cache trade-off). Baseline non-CSP headers already shipped in Block 0.
 
 ### BLOCK 2 — Auth fail-closed defaults · size: **M** · touches auth core
 

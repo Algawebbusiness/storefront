@@ -68,4 +68,6 @@ export {
 	buildWebSiteJsonLd,
 	buildCollectionPageJsonLd,
 	jsonLdScriptProps,
+	serializeJsonLd,
 } from "./json-ld";
+export { JsonLdScript } from "./json-ld-script";

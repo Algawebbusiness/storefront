@@ -6,7 +6,7 @@ import { isPayloadConfigured, getPayloadMediaUrl } from "@/lib/payload/client";
 import { getPostBySlug } from "@/lib/payload/queries";
 import type { PayloadMedia } from "@/lib/payload/types";
 import { PayloadRichTextRenderer } from "@/ui/components/payload-rich-text";
-import { buildPageMetadata, buildBreadcrumbListJsonLd } from "@/lib/seo";
+import { buildPageMetadata, buildBreadcrumbListJsonLd, JsonLdScript } from "@/lib/seo";
 import { Breadcrumbs } from "@/ui/components/breadcrumbs";
 import { formatDate } from "@/config/locale";
 
@@ -30,9 +30,7 @@ export async function generateMetadata(props: {
 	});
 }
 
-export default async function BlogPostPage(props: {
-	params: Promise<{ slug: string; channel: string }>;
-}) {
+export default async function BlogPostPage(props: { params: Promise<{ slug: string; channel: string }> }) {
 	if (!isPayloadConfigured()) {
 		notFound();
 	}
@@ -60,12 +58,7 @@ export default async function BlogPostPage(props: {
 
 	return (
 		<article className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
-			{breadcrumbJsonLd && (
-				<script
-					type="application/ld+json"
-					dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
-				/>
-			)}
+			<JsonLdScript data={breadcrumbJsonLd} />
 
 			<div className="mb-6">
 				<Breadcrumbs items={breadcrumbs} />

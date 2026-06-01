@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { cacheLife, cacheTag } from "next/cache";
 import { ProductListByCollectionDocument, ProductOrderField, OrderDirection } from "@/gql/graphql";
 import { executePublicGraphQL } from "@/lib/graphql";
-import { buildOrganizationJsonLd, buildWebSiteJsonLd } from "@/lib/seo";
+import { buildOrganizationJsonLd, buildWebSiteJsonLd, JsonLdScript } from "@/lib/seo";
 import { brandConfig } from "@/config/brand";
 import { ProductList } from "@/ui/components/product-list";
 
@@ -52,18 +52,8 @@ export default async function Page(props: { params: Promise<{ channel: string }>
 
 	return (
 		<section className="mx-auto max-w-7xl p-8 pb-16">
-			{organizationJsonLd && (
-				<script
-					type="application/ld+json"
-					dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }}
-				/>
-			)}
-			{webSiteJsonLd && (
-				<script
-					type="application/ld+json"
-					dangerouslySetInnerHTML={{ __html: JSON.stringify(webSiteJsonLd) }}
-				/>
-			)}
+			<JsonLdScript data={organizationJsonLd} />
+			<JsonLdScript data={webSiteJsonLd} />
 			<h2 className="sr-only">Product list</h2>
 			<Suspense
 				fallback={

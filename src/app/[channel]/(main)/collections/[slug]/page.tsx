@@ -6,7 +6,7 @@ import { ProductListByCollectionDocument, ProductOrderField, OrderDirection } fr
 import { executePublicGraphQL } from "@/lib/graphql";
 import { getPaginatedListVariables } from "@/lib/utils";
 import { parseEditorJSToText } from "@/lib/editorjs";
-import { buildBreadcrumbListJsonLd } from "@/lib/seo";
+import { buildBreadcrumbListJsonLd, JsonLdScript } from "@/lib/seo";
 import { CategoryHero, transformToProductCard } from "@/ui/components/plp";
 import { buildSortVariables, buildFilterVariables } from "@/ui/components/plp/filter-utils";
 import { CollectionPageClient } from "./client";
@@ -92,12 +92,7 @@ async function CollectionContent({
 
 	return (
 		<>
-			{breadcrumbJsonLd && (
-				<script
-					type="application/ld+json"
-					dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
-				/>
-			)}
+			<JsonLdScript data={breadcrumbJsonLd} />
 			<CategoryHero
 				title={collection.name}
 				description={plainDescription}

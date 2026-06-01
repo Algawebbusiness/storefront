@@ -8,7 +8,7 @@ import xss from "xss";
 
 import { executePublicGraphQL } from "@/lib/graphql";
 import { ProductDetailsDocument, type ProductDetailsQuery } from "@/gql/graphql";
-import { buildPageMetadata, buildProductJsonLd, buildBreadcrumbListJsonLd } from "@/lib/seo";
+import { buildPageMetadata, buildProductJsonLd, buildBreadcrumbListJsonLd, JsonLdScript } from "@/lib/seo";
 import { getProductEnrichment } from "@/lib/payload/queries";
 import { PayloadRichTextRenderer } from "@/ui/components/payload-rich-text";
 import { Breadcrumbs } from "@/ui/components/breadcrumbs";
@@ -167,18 +167,8 @@ async function ProductContent({
 		<div className="flex min-h-screen flex-col bg-background">
 			{lcpImageUrl && <link rel="preload" as="image" href={lcpImageUrl} fetchPriority="high" />}
 
-			{productJsonLd && (
-				<script
-					type="application/ld+json"
-					dangerouslySetInnerHTML={{ __html: JSON.stringify(productJsonLd) }}
-				/>
-			)}
-			{breadcrumbJsonLd && (
-				<script
-					type="application/ld+json"
-					dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
-				/>
-			)}
+			<JsonLdScript data={productJsonLd} />
+			<JsonLdScript data={breadcrumbJsonLd} />
 
 			<main className="mx-auto w-full max-w-7xl flex-1 px-4 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-10">
 				<div className="mb-6 hidden sm:block">
@@ -217,17 +207,27 @@ async function ProductContent({
 								<div className="mt-8 space-y-6 border-t border-border pt-6">
 									{enrichment.tips && (
 										<div>
-											<h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Tips</h3>
+											<h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+												Tips
+											</h3>
 											<p className="text-sm leading-relaxed text-muted-foreground">{enrichment.tips}</p>
 										</div>
 									)}
 									{enrichment.extendedDescription && (
-										<PayloadRichTextRenderer content={enrichment.extendedDescription} className="prose prose-sm max-w-none dark:prose-invert" />
+										<PayloadRichTextRenderer
+											content={enrichment.extendedDescription}
+											className="prose prose-sm max-w-none dark:prose-invert"
+										/>
 									)}
 									{enrichment.usageGuide && (
 										<div>
-											<h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Usage Guide</h3>
-											<PayloadRichTextRenderer content={enrichment.usageGuide} className="prose prose-sm max-w-none dark:prose-invert" />
+											<h3 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+												Usage Guide
+											</h3>
+											<PayloadRichTextRenderer
+												content={enrichment.usageGuide}
+												className="prose prose-sm max-w-none dark:prose-invert"
+											/>
 										</div>
 									)}
 								</div>
