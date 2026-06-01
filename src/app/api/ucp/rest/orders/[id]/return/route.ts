@@ -23,6 +23,7 @@
 
 import { ORDER_BY_ID_QUERY, type OrderByIdData } from "@/lib/protocols/shared/order-queries";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
+import { validateOutboundWebhookUrl } from "@/lib/protocols/shared/url-guard";
 import {
 	checkReturnEligibility,
 	createReturnRecord,
@@ -57,10 +58,7 @@ const ALLOWED_REASONS: ReadonlySet<ReturnReason> = new Set([
 	"wrong_item",
 ]);
 
-const ALLOWED_REFUND_METHODS: ReadonlySet<RefundMethod> = new Set([
-	"original_payment",
-	"store_credit",
-]);
+const ALLOWED_REFUND_METHODS: ReadonlySet<RefundMethod> = new Set(["original_payment", "store_credit"]);
 
 export const POST = withUcpRoute<OrderParams>(
 	{
@@ -130,6 +128,18 @@ export const POST = withUcpRoute<OrderParams>(
 				},
 				{ status: 400 },
 			);
+		}
+
+		// SECURITY (SSRF): the webhook_url is fetched server-side on refund, so
+		// validate before persisting it (CWE-918).
+		if (body.webhook_url !== undefined) {
+			const guard = validateOutboundWebhookUrl(body.webhook_url);
+			if (!guard.ok) {
+				return signedJsonResponse(
+					{ error: { code: "bad_request", message: `webhook_url rejected: ${guard.reason}` } },
+					{ status: 400 },
+				);
+			}
 		}
 
 		const orderResult = await saleorQuery<OrderByIdData>(ORDER_BY_ID_QUERY, { id });
@@ -214,9 +224,7 @@ export const POST = withUcpRoute<OrderParams>(
 	},
 );
 
-function normalizeRequestedLines(
-	raw: ReturnRouteBody["lines"],
-): ReturnLineRequest[] | undefined | "invalid" {
+function normalizeRequestedLines(raw: ReturnRouteBody["lines"]): ReturnLineRequest[] | undefined | "invalid" {
 	if (!raw) return undefined;
 	if (!Array.isArray(raw)) return "invalid";
 	if (raw.length === 0) return undefined;

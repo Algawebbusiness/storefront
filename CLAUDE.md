@@ -1280,7 +1280,8 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 7 — SSRF on agent webhook_url · size: **M**
 
-- [ ] [HIGH] Validate `webhook_url` before server-side fetch: `new URL()`, require https, block private/loopback/link-local/metadata IPs after DNS, per-agent allowlist, `redirect:'manual'` + re-validate — `orders/[id]/return/route.ts:167`, `return-mapper.ts:253`, `agent-webhooks.ts:79`. CWE-918.
+- [x] [HIGH] Validate `webhook_url` before server-side fetch. New `src/lib/protocols/shared/url-guard.ts` (`validateOutboundWebhookUrl`): require https, reject credentials-in-URL, block private/loopback/link-local/CGNAT/metadata IPv4, IPv6 loopback/ULA/link-local, decimal/hex IP encodings, and internal hostnames (`localhost`, `*.internal`, `*.local`, GCP metadata). Optional operator allowlist via `UCP_WEBHOOK_ALLOWED_HOSTS`. Enforced at acceptance (`return/route.ts` → 400) AND delivery (`agent-webhooks.ts` notifyAgent) + `redirect: "manual"` so 3xx can't bounce internal. 18 unit tests added; existing tests pass. CWE-918.
+  - **Residual (edge-safe, no DNS):** a public hostname resolving to an internal IP (DNS rebinding) is NOT blocked — close via `UCP_WEBHOOK_ALLOWED_HOSTS` and/or network egress policy. Documented in `url-guard.ts`.
 
 ### BLOCK 8 — Idempotency & atomicity on money paths · size: **L** · (durable store ties to Block 9)
 
