@@ -1,6 +1,6 @@
 import { getBaseUrl } from "@/lib/seo";
 import { mapProductToAcp, type SaleorProductNode } from "@/lib/protocols/acp/product-mapper";
-import { protocolDisabledResponse, validateAgentApiKey, unauthorizedResponse } from "@/lib/protocols/shared/auth";
+import { withAcpRoute } from "@/lib/protocols/acp/route-handler";
 
 const SALEOR_API_URL = process.env.NEXT_PUBLIC_SALEOR_API_URL;
 const DEFAULT_CHANNEL = process.env.NEXT_PUBLIC_DEFAULT_CHANNEL || "default-channel";
@@ -98,17 +98,7 @@ async function fetchSaleorQuery<T>(query: string, variables: Record<string, unkn
 	}
 }
 
-export async function GET(request: Request) {
-	if (process.env.ACP_ENABLED !== "true") {
-		return protocolDisabledResponse("ACP");
-	}
-
-	// Validate agent authentication
-	const auth = validateAgentApiKey(request);
-	if (!auth.valid) {
-		return unauthorizedResponse();
-	}
-
+export const GET = withAcpRoute({ action: "catalog.feed", scope: "catalog.read" }, async (request) => {
 	const baseUrl = getBaseUrl();
 	const channel = DEFAULT_CHANNEL;
 
@@ -153,4 +143,4 @@ export async function GET(request: Request) {
 			"Content-Type": "application/json",
 		},
 	});
-}
+});

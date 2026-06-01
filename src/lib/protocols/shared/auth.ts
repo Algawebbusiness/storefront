@@ -9,16 +9,16 @@
  *   3. OAuth2 JWT (orthogonal): Authorization: Bearer eyJ...
  *      → customer-scoped, returns userContext for Saleor mutations.
  *
- * Use `verifyAgentRequest` for new code (returns AgentIdentity + consumed
- * body). Use `validateAgentApiKey` only for backward-compat call sites that
- * haven't been migrated to the signed flow yet.
+ * All routes use the single async `verifyAgentRequest` entry point (returns
+ * AgentIdentity + consumed body + optional OAuth userContext). The legacy
+ * synchronous `validateAgentApiKey`/`validateOAuthToken` wrappers were removed
+ * once every ACP/UCP route was migrated (Block 4).
  */
 
 import { lookupAgent } from "./agent-registry";
 import type { AgentIdentity } from "./agent-registry-types";
 import { parseSignatureHeader } from "./response";
 import { verifyDetached } from "./signing";
-import type { AgentAuthResult } from "./types";
 import { verifyJwt, type JwtPayload } from "@/lib/oauth/tokens";
 
 /**
@@ -107,52 +107,6 @@ export async function verifyAgentRequest(request: Request): Promise<AgentAuthOut
 	}
 
 	return { ok: false, status: 401, reason: "Missing UCP-Signature or Authorization header" };
-}
-
-/**
- * Legacy synchronous wrapper around `Authorization: Bearer` that does NOT
- * verify signed requests or consume the body. Kept for routes that haven't
- * been migrated to `verifyAgentRequest` yet — new code should not use it.
- *
- * @deprecated Use `verifyAgentRequest` instead. Will be removed when all
- *             routes finish the B9 migration.
- */
-export function validateAgentApiKey(request: Request): AgentAuthResult {
-	const authHeader = request.headers.get("Authorization");
-
-	if (!authHeader || !authHeader.startsWith("Bearer ")) {
-		return { valid: false };
-	}
-
-	const token = authHeader.slice(7).trim();
-
-	if (token.startsWith("eyJ")) {
-		return validateOAuthToken(token, request);
-	}
-
-	const validKeys = getValidApiKeys();
-	const acpKey = process.env.ACP_API_KEY;
-	if (acpKey && token === acpKey) {
-		return { valid: true, agentId: "acp" };
-	}
-
-	if (validKeys.size === 0) {
-		if (!legacyAnonymousAllowed()) return { valid: false };
-		return { valid: true, agentId: "anonymous" };
-	}
-
-	if (!validKeys.has(token)) {
-		return { valid: false };
-	}
-
-	const ucpAgentHeader = request.headers.get("UCP-Agent");
-	const profileUrl = ucpAgentHeader?.match(/profile="([^"]+)"/)?.[1];
-
-	return {
-		valid: true,
-		agentId: token.slice(0, 8),
-		...(profileUrl && { profileUrl }),
-	};
 }
 
 /** Create a 401 Unauthorized response */
@@ -350,32 +304,4 @@ function getValidApiKeys(): Set<string> {
  */
 function legacyAnonymousAllowed(): boolean {
 	return process.env.NODE_ENV !== "production" || process.env.UCP_ALLOW_ANONYMOUS_LEGACY === "true";
-}
-
-function validateOAuthToken(token: string, request: Request): AgentAuthResult {
-	let payload: JwtPayload | null;
-	try {
-		payload = verifyJwt(token);
-	} catch {
-		return { valid: false };
-	}
-
-	if (!payload || payload.type !== "access") {
-		return { valid: false };
-	}
-
-	const ucpAgentHeader = request.headers.get("UCP-Agent");
-	const profileUrl = ucpAgentHeader?.match(/profile="([^"]+)"/)?.[1];
-
-	return {
-		valid: true,
-		agentId: payload.client_id,
-		...(profileUrl && { profileUrl }),
-		userContext: {
-			userId: payload.sub,
-			email: payload.email,
-			scope: payload.scope,
-			saleorToken: payload.saleor_token || "",
-		},
-	};
 }

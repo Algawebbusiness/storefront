@@ -18,6 +18,7 @@ import { buildApprovalUrl, createPendingApproval, requiresApproval } from "@/lib
 import { saleorQuery } from "@/mcp-server/saleor-client";
 import { processStripePayment } from "@/lib/protocols/shared/payment";
 import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
+import { ownsCheckout } from "@/lib/protocols/shared/ownership";
 import {
 	CHECKOUT_BY_ID_QUERY,
 	CHECKOUT_COMPLETE_MUTATION,
@@ -72,7 +73,9 @@ export const POST = withAcpRoute<CheckoutParams>(
 				{ status: 500 },
 			);
 		}
-		if (!fetchResult.data.checkout) {
+		if (!fetchResult.data.checkout || !ownsCheckout(fetchResult.data.checkout, auth)) {
+			// SECURITY (IDOR, CWE-639): only the owning agent/customer may complete
+			// (charge) this checkout. 404 to a non-owner so existence isn't leaked.
 			return NextResponse.json(
 				{ error: { code: "not_found", message: "Checkout session not found" } },
 				{ status: 404 },

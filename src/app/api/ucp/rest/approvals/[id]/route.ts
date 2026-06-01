@@ -9,12 +9,8 @@
  * hasn't acted by `expires_at`.
  */
 
-import { validateAgentApiKey } from "@/lib/protocols/shared/auth";
-import {
-	signedJsonResponse,
-	signedProtocolDisabled,
-	signedUnauthorized,
-} from "@/lib/protocols/shared/response";
+import { verifyAgentRequest } from "@/lib/protocols/shared/auth";
+import { signedJsonResponse, signedProtocolDisabled } from "@/lib/protocols/shared/response";
 import { getApprovalStatus } from "@/lib/protocols/shared/approvals";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
 
@@ -23,21 +19,26 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 		return signedProtocolDisabled("UCP");
 	}
 
-	const auth = validateAgentApiKey(request);
-	if (!auth.valid) {
-		return signedUnauthorized();
+	const verify = await verifyAgentRequest(request);
+	if (!verify.ok) {
+		return signedJsonResponse(
+			{ error: { code: verify.status === 403 ? "forbidden" : "unauthorized", message: verify.reason } },
+			{ status: verify.status },
+		);
 	}
 
 	const { id } = await params;
 	const approval = await getApprovalStatus(id);
-	if (!approval) {
+	// SECURITY (IDOR, CWE-639): only the agent that created the approval may poll
+	// it. 404 (not 403) to a non-owner so the approval's existence isn't leaked.
+	if (!approval || approval.agent_id !== verify.agent.id) {
 		return signedJsonResponse(
 			{ error: { code: "not_found", message: `Approval ${id} not found` } },
 			{ status: 404 },
 		);
 	}
 
-	const ucpMeta = await buildUcpMeta(auth.profileUrl);
+	const ucpMeta = await buildUcpMeta(verify.profileUrl);
 	return signedJsonResponse({
 		ucp: ucpMeta,
 		approval: {

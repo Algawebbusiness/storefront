@@ -21,6 +21,7 @@ vi.mock("@/lib/protocols/shared/auth", () => ({
 
 import { POST as completeAcp } from "@/app/api/acp/checkout/[id]/complete/route";
 import { GET as getAcpOrder } from "@/app/api/acp/orders/[id]/route";
+import { GET as getAcpCheckout } from "@/app/api/acp/checkout/[id]/route";
 import { _resetLimitBuckets } from "@/lib/protocols/shared/limits";
 
 function agent(scopes: AgentIdentity["scope"]): AgentIdentity {
@@ -139,6 +140,21 @@ describe("ACP routes via withAcpRoute", () => {
 				headers: { Authorization: "Bearer x" },
 			}),
 			{ params: Promise.resolve({ id: "ord_1" }) },
+		);
+		expect(res.status).toBe(404);
+	});
+
+	it("checkout read: 404 when the checkout is bound to a different agent (IDOR)", async () => {
+		mockVerifyAgentRequest.mockResolvedValueOnce(auth(["checkout.create"]));
+		mockSaleorQuery.mockResolvedValueOnce({
+			ok: true,
+			data: {
+				checkout: { id: "co_1", email: null, metadata: [{ key: "ucp.agent_id", value: "other-agent" }] },
+			},
+		});
+		const res = await getAcpCheckout(
+			new Request("https://store.example/api/acp/checkout/co_1", { headers: { Authorization: "Bearer x" } }),
+			{ params: Promise.resolve({ id: "co_1" }) },
 		);
 		expect(res.status).toBe(404);
 	});
