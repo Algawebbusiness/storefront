@@ -88,7 +88,7 @@ export async function POST(request: Request) {
 
 	const { data } = loginResult;
 
-	const code = createAuthorizationCode({
+	const code = await createAuthorizationCode({
 		clientId,
 		redirectUri,
 		scope,

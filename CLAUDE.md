@@ -1237,7 +1237,7 @@ pnpm run build            # Produkční build
 | 3b                   | Cart/checkout agent-binding + ACP/approvals ownership                                                | ✅ done (UCP+ACP cart/checkout binding, ACP order, approvals; only lines/loyalty mutation routes remain — low severity) |
 | 2                    | Auth fail-closed defaults (`validateApiKey`, `AGENT_API_KEYS`)                                       | ✅ done (prod fail-closed; public `/mcp` tool split deferred to 3b)                                                     |
 | 4                    | ACP → guard chain + delete deprecated auth                                                           | ✅ done (all ACP routes on withAcpRoute; validateAgentApiKey/validateOAuthToken deleted)                                |
-| 9                    | Durable store (Redis/DB) — INFRA                                                                     | ⏳ TODO (foundation for 5/6/8/10)                                                                                       |
+| 9                    | Durable store (Upstash Redis via REST, swappable) — INFRA                                            | ✅ code done (KvStore + in-memory + Upstash; codes/tokens/limits migrated). Operator step: provision Upstash at deploy  |
 | 5,6,8,10,11,12,13,14 | signing replay, JWT token leak, idempotency, rate-limit, scope, JWT correctness, perf, quality/tests | ⏳ TODO                                                                                                                 |
 
 **Closed so far:** 5 HIGH (SSRF webhook_url, stored XSS, open image proxy, webhook fail-open, order IDOR) + many Med/Low/Info. Full test suite green throughout (530/530); every block committed separately.
@@ -1323,9 +1323,20 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 - [ ] [HIGH] Checkout completion: require `Idempotency-Key` in durable storage before charging; short-circuit duplicates; reuse fetched checkout — `checkout-sessions/[id]/complete/route.ts:69-151`, `limits.ts:45-96`. CWE-367.
 - [ ] [HIGH] Return/refund: track refund state in Saleor (not in-memory Map), make create-return atomic (unique constraint), idempotency keys — `return-mapper.ts:142-148,269-271`. CWE-367.
 
-### BLOCK 9 — Durable state backing (Redis/DB) · size: **L** · INFRA — unblocks 5/6/8 properly
+### BLOCK 9 — Durable state backing · size: **L** · INFRA — unblocks 5/6/8/10
 
-- [ ] [MEDIUM] Back auth codes, revoked refresh JTIs, rate/spend buckets with Redis/DB + TTLs; fail closed when store unavailable for security checks; make `per_session_cents` cumulative — `oauth/codes.ts:34`, `oauth/tokens.ts:155-166`, `limits.ts:33-36`. CWE-613/837.
+**Decision: Upstash Redis via REST (no npm dep — plain fetch), behind a swappable `KvStore` abstraction. Backend choice stays open (Supabase = future adapter); dev/test run on in-memory.**
+
+- [x] New `src/lib/store/` — `KvStore` interface (`get/set(ttl)/del/getdel/incr/incrby/expire/sadd/sismember/scard`) + `InMemoryKvStore` (dev/test/single-instance) + `UpstashKvStore` (REST) + `getStore()` factory (Upstash when `UPSTASH_REDIS_REST_URL`+`_TOKEN` set, else in-memory with a prod warning).
+- [x] `oauth/codes.ts` → store; single-use now ATOMIC via `getdel` (replay-safe across instances), TTL-backed expiry.
+- [x] `oauth/tokens.ts` revoked JTIs → store with refresh-token TTL (revocation holds across instances).
+- [x] `limits.ts` → store: RPM fixed-window (`INCR`+`EXPIRE`), sessions/day (`SADD`/`SISMEMBER`/`SCARD`), per-day/month spend counters; new `recordSpend()` called after successful UCP+ACP checkout completion so caps reflect real cumulative spend.
+- [x] Callers awaited (oauth consent/token/revoke). +12 tests (store 5, spend 2, plus async test updates). 557/557; tsc 0.
+- [x] `.env.example` documents `UPSTASH_REDIS_REST_URL`/`_TOKEN` (+ `UCP_ALLOW_ANONYMOUS_LEGACY`, `MCP_TRUST_TRANSPORT`).
+- [ ] **OPERATOR STEP (you, at deploy):** create a free Upstash Redis DB, set the 2 env vars. Until then prod runs in-memory (logs a warning) — fine for single-instance Sliplane, UNSAFE on Vercel/CF multi-instance.
+- [ ] [follow-up, Block 8] `per_session_cents` cumulative + atomic reserve/commit (read-then-record is currently non-atomic TOCTOU). `recordSpend` + the store primitives are the foundation.
+
+> **Block 9 code COMPLETE** (abstraction + Upstash adapter + in-memory + all three modules migrated). Only the deploy-time Upstash provisioning remains.
 
 ### BLOCK 10 — Rate limiting / brute-force · size: **M** · (needs Block 9 store)
 

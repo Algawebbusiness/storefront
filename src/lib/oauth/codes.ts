@@ -1,20 +1,21 @@
 /**
- * OAuth2 authorization code store.
+ * OAuth2 authorization code store (durable; see `@/lib/store`).
  *
- * Authorization codes are short-lived (5 min), single-use tokens
- * that bind together: client, redirect_uri, PKCE challenge, scope,
- * and the authenticated Saleor session.
+ * Authorization codes are short-lived (5 min), single-use tokens that bind
+ * together: client, redirect_uri, PKCE challenge, scope, and the authenticated
+ * Saleor session.
  *
  * Security:
  * - Codes generated with crypto.randomBytes (256 bits of entropy)
- * - Single-use: marked as used after first exchange
- * - Auto-expire after 5 minutes
+ * - Single-use enforced ATOMICALLY via `getdel` (replay-safe across instances)
+ * - Auto-expire after AUTH_CODE_TTL (store TTL)
  * - Bound to specific client_id and redirect_uri
- * - Store Saleor tokens securely (never exposed to client)
+ * - Saleor tokens kept in the store, never exposed to the client
  */
 
 import { randomBytes } from "crypto";
 import { AUTH_CODE_TTL } from "./config";
+import { getStore } from "@/lib/store";
 
 export interface StoredAuthorizationCode {
 	code: string;
@@ -28,23 +29,13 @@ export interface StoredAuthorizationCode {
 	userId: string;
 	userEmail: string;
 	createdAt: number;
-	used: boolean;
 }
 
-const codeStore = new Map<string, StoredAuthorizationCode>();
+const KEY_PREFIX = "oauth:code:";
+const TTL_SECONDS = Math.ceil(AUTH_CODE_TTL / 1000);
 
-/** Remove expired codes to prevent memory leaks */
-function cleanupExpired(): void {
-	const now = Date.now();
-	for (const [code, data] of codeStore) {
-		if (now - data.createdAt > AUTH_CODE_TTL) {
-			codeStore.delete(code);
-		}
-	}
-}
-
-/** Generate and store a new authorization code */
-export function createAuthorizationCode(params: {
+/** Generate and store a new authorization code. */
+export async function createAuthorizationCode(params: {
 	clientId: string;
 	redirectUri: string;
 	scope: string;
@@ -54,63 +45,40 @@ export function createAuthorizationCode(params: {
 	saleorRefreshToken: string;
 	userId: string;
 	userEmail: string;
-}): string {
-	cleanupExpired();
-
+}): Promise<string> {
 	const code = randomBytes(32).toString("hex");
-
-	codeStore.set(code, {
-		code,
-		...params,
-		createdAt: Date.now(),
-		used: false,
-	});
-
+	const record: StoredAuthorizationCode = { code, ...params, createdAt: Date.now() };
+	await getStore().set(KEY_PREFIX + code, JSON.stringify(record), TTL_SECONDS);
 	return code;
 }
 
 /**
- * Consume an authorization code (single-use).
+ * Consume an authorization code (single-use). Returns the stored data if valid,
+ * null if the code doesn't exist, expired, was already used, or the
+ * client_id/redirect_uri binding doesn't match.
  *
- * Returns the stored data if valid, null if:
- * - Code doesn't exist
- * - Code has expired (5 min)
- * - Code was already used
- * - Client ID doesn't match
- * - Redirect URI doesn't match
+ * The code is removed atomically on first lookup (`getdel`), so a replayed code
+ * — or a mismatched-binding attempt — cannot be exchanged a second time.
  */
-export function consumeAuthorizationCode(
+export async function consumeAuthorizationCode(
 	code: string,
 	clientId: string,
 	redirectUri: string,
-): StoredAuthorizationCode | null {
-	cleanupExpired();
+): Promise<StoredAuthorizationCode | null> {
+	const raw = await getStore().getdel(KEY_PREFIX + code);
+	if (!raw) return null;
 
-	const stored = codeStore.get(code);
-	if (!stored) return null;
-
-	// Check expiry
-	if (Date.now() - stored.createdAt > AUTH_CODE_TTL) {
-		codeStore.delete(code);
+	let stored: StoredAuthorizationCode;
+	try {
+		stored = JSON.parse(raw) as StoredAuthorizationCode;
+	} catch {
 		return null;
 	}
 
-	// Check single-use
-	if (stored.used) {
-		// Possible replay attack — delete the code entirely
-		codeStore.delete(code);
-		console.warn(`[OAuth] Authorization code replay attempt for client ${clientId}`);
-		return null;
-	}
-
-	// Validate binding
 	if (stored.clientId !== clientId || stored.redirectUri !== redirectUri) {
 		console.warn(`[OAuth] Code mismatch: expected client=${stored.clientId}, got ${clientId}`);
 		return null;
 	}
-
-	// Mark as used (but keep in store briefly for replay detection)
-	stored.used = true;
 
 	return stored;
 }

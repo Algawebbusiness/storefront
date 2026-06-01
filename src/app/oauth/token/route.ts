@@ -87,7 +87,7 @@ async function handleAuthorizationCodeGrant(body: TokenRequest, clientId: string
 
 	// ── Consume authorization code (single-use) ──
 
-	const stored = consumeAuthorizationCode(code, clientId, redirect_uri);
+	const stored = await consumeAuthorizationCode(code, clientId, redirect_uri);
 	if (!stored) {
 		console.warn(`[OAuth] Invalid/expired/reused authorization code for client=${clientId}`);
 		return errorResponse("invalid_grant", "Invalid, expired, or already-used authorization code", 400);
@@ -148,14 +148,14 @@ async function handleRefreshTokenGrant(body: TokenRequest, clientId: string) {
 	}
 
 	// Check revocation (single-use rotation)
-	if (isRefreshTokenRevoked(payload.jti)) {
+	if (await isRefreshTokenRevoked(payload.jti)) {
 		console.warn(`[OAuth] Revoked refresh token reuse attempt: client=${clientId} user=${payload.sub}`);
 		return errorResponse("invalid_grant", "Refresh token has been revoked", 400);
 	}
 
 	// ── Revoke old token and issue new pair ──
 
-	revokeRefreshToken(payload.jti);
+	await revokeRefreshToken(payload.jti);
 
 	// Re-use the Saleor refresh token to get new Saleor tokens
 	// For simplicity, we create new OAuth tokens with the same Saleor tokens

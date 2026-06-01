@@ -59,7 +59,16 @@ describe("OAuth2 JWT tokens", () => {
 		// Tamper with the payload part
 		const parts = token.split(".");
 		const tamperedPayload = Buffer.from(
-			JSON.stringify({ sub: "hacker", email: "h@x.com", scope: "profile", client_id: "x", type: "access", jti: "abc", iat: 0, exp: 9999999999 }),
+			JSON.stringify({
+				sub: "hacker",
+				email: "h@x.com",
+				scope: "profile",
+				client_id: "x",
+				type: "access",
+				jti: "abc",
+				iat: 0,
+				exp: 9999999999,
+			}),
 		)
 			.toString("base64")
 			.replace(/\+/g, "-")
@@ -130,10 +139,10 @@ describe("OAuth2 JWT tokens", () => {
 
 		const jti = "test-jti-abc123";
 
-		expect(isRefreshTokenRevoked(jti)).toBe(false);
+		expect(await isRefreshTokenRevoked(jti)).toBe(false);
 
-		revokeRefreshToken(jti);
+		await revokeRefreshToken(jti);
 
-		expect(isRefreshTokenRevoked(jti)).toBe(true);
+		expect(await isRefreshTokenRevoked(jti)).toBe(true);
 	});
 });

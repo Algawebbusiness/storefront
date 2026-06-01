@@ -18,6 +18,7 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { getJwtSecret, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL } from "./config";
+import { getStore } from "@/lib/store";
 
 /** Base64url encode */
 function base64url(data: string | Buffer): string {
@@ -148,20 +149,19 @@ export function createTokenPair(params: {
 // ============================================================================
 
 /**
- * Set of revoked refresh token JTIs.
- * In production, this should be backed by Redis or a database.
- * In-memory is acceptable for a single-instance deployment.
+ * Revoked refresh-token JTIs, kept in the durable store (`@/lib/store`) so a
+ * revoked token is rejected across all instances, not just the one that
+ * revoked it. The marker is given the refresh-token TTL, after which the token
+ * is expired anyway and the entry can lapse.
  */
-const revokedTokens = new Set<string>();
+const REVOKED_PREFIX = "oauth:revoked:";
 
-/** Revoke a refresh token by its JTI */
-export function revokeRefreshToken(jti: string): void {
-	revokedTokens.add(jti);
-	// Cleanup: remove entries older than REFRESH_TOKEN_TTL
-	// (In practice, the set stays small because tokens expire)
+/** Revoke a refresh token by its JTI. */
+export async function revokeRefreshToken(jti: string): Promise<void> {
+	await getStore().set(REVOKED_PREFIX + jti, "1", REFRESH_TOKEN_TTL);
 }
 
-/** Check if a refresh token has been revoked */
-export function isRefreshTokenRevoked(jti: string): boolean {
-	return revokedTokens.has(jti);
+/** Check if a refresh token has been revoked. */
+export async function isRefreshTokenRevoked(jti: string): Promise<boolean> {
+	return (await getStore().get(REVOKED_PREFIX + jti)) !== null;
 }

@@ -15,6 +15,7 @@
 import { NextResponse } from "next/server";
 import { withAcpRoute } from "@/lib/protocols/acp/route-handler";
 import { buildApprovalUrl, createPendingApproval, requiresApproval } from "@/lib/protocols/shared/approvals";
+import { recordSpend } from "@/lib/protocols/shared/limits";
 import { saleorQuery } from "@/mcp-server/saleor-client";
 import { processStripePayment } from "@/lib/protocols/shared/payment";
 import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
@@ -131,6 +132,9 @@ export const POST = withAcpRoute<CheckoutParams>(
 				{ status: 400 },
 			);
 		}
+
+		// Record committed spend so per-day/month caps reflect real spend.
+		await recordSpend(auth.agent.id, totalCents);
 
 		// Re-fetch for final state
 		const finalFetch = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });

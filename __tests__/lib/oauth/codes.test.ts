@@ -24,15 +24,15 @@ describe("Authorization code store", () => {
 
 	it("createAuthorizationCode returns a hex string", async () => {
 		const { createAuthorizationCode } = await loadModule();
-		const code = createAuthorizationCode(baseParams);
+		const code = await createAuthorizationCode(baseParams);
 		expect(code).toMatch(/^[0-9a-f]{64}$/);
 	});
 
 	it("consumeAuthorizationCode returns stored data for valid code", async () => {
 		const { createAuthorizationCode, consumeAuthorizationCode } = await loadModule();
-		const code = createAuthorizationCode(baseParams);
+		const code = await createAuthorizationCode(baseParams);
 
-		const result = consumeAuthorizationCode(code, "test-client", "https://example.com/callback");
+		const result = await consumeAuthorizationCode(code, "test-client", "https://example.com/callback");
 		expect(result).not.toBeNull();
 		expect(result!.clientId).toBe("test-client");
 		expect(result!.scope).toBe("profile checkout");
@@ -43,28 +43,28 @@ describe("Authorization code store", () => {
 
 	it("consumeAuthorizationCode returns null for wrong clientId", async () => {
 		const { createAuthorizationCode, consumeAuthorizationCode } = await loadModule();
-		const code = createAuthorizationCode(baseParams);
+		const code = await createAuthorizationCode(baseParams);
 
-		const result = consumeAuthorizationCode(code, "wrong-client", "https://example.com/callback");
+		const result = await consumeAuthorizationCode(code, "wrong-client", "https://example.com/callback");
 		expect(result).toBeNull();
 	});
 
 	it("consumeAuthorizationCode returns null for wrong redirectUri", async () => {
 		const { createAuthorizationCode, consumeAuthorizationCode } = await loadModule();
-		const code = createAuthorizationCode(baseParams);
+		const code = await createAuthorizationCode(baseParams);
 
-		const result = consumeAuthorizationCode(code, "test-client", "https://evil.com/callback");
+		const result = await consumeAuthorizationCode(code, "test-client", "https://evil.com/callback");
 		expect(result).toBeNull();
 	});
 
 	it("consumeAuthorizationCode returns null on second use (single-use)", async () => {
 		const { createAuthorizationCode, consumeAuthorizationCode } = await loadModule();
-		const code = createAuthorizationCode(baseParams);
+		const code = await createAuthorizationCode(baseParams);
 
-		const first = consumeAuthorizationCode(code, "test-client", "https://example.com/callback");
+		const first = await consumeAuthorizationCode(code, "test-client", "https://example.com/callback");
 		expect(first).not.toBeNull();
 
-		const second = consumeAuthorizationCode(code, "test-client", "https://example.com/callback");
+		const second = await consumeAuthorizationCode(code, "test-client", "https://example.com/callback");
 		expect(second).toBeNull();
 	});
 
@@ -74,12 +74,12 @@ describe("Authorization code store", () => {
 		vi.setSystemTime(now);
 
 		const { createAuthorizationCode, consumeAuthorizationCode } = await loadModule();
-		const code = createAuthorizationCode(baseParams);
+		const code = await createAuthorizationCode(baseParams);
 
 		// Advance past 5-minute TTL
 		vi.setSystemTime(now + 5 * 60 * 1000 + 1);
 
-		const result = consumeAuthorizationCode(code, "test-client", "https://example.com/callback");
+		const result = await consumeAuthorizationCode(code, "test-client", "https://example.com/callback");
 		expect(result).toBeNull();
 
 		vi.useRealTimers();

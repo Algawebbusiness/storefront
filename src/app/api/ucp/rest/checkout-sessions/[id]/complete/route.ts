@@ -23,6 +23,7 @@ import {
 	type CheckoutByIdData,
 	type CheckoutCompleteData,
 } from "@/lib/protocols/shared/checkout-queries";
+import { recordSpend } from "@/lib/protocols/shared/limits";
 import { ownsCheckout } from "@/lib/protocols/shared/ownership";
 import { processStripePayment, type StripePaymentMethod } from "@/lib/protocols/shared/payment";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
@@ -163,6 +164,9 @@ export const POST = withUcpRoute<CheckoutParams>(
 				{ status: 400 },
 			);
 		}
+
+		// Record committed spend so per-day/month caps reflect real spend.
+		await recordSpend(auth.agent.id, totalCents);
 
 		const ucpMeta = await buildUcpMeta(auth.profileUrl);
 
