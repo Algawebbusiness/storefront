@@ -92,7 +92,11 @@ interface SaleorMeResult {
 	};
 }
 
-async function saleorGraphQL<T>(query: string, variables?: Record<string, unknown>, token?: string): Promise<T | null> {
+async function saleorGraphQL<T>(
+	query: string,
+	variables?: Record<string, unknown>,
+	token?: string,
+): Promise<T | null> {
 	if (!SALEOR_API_URL) return null;
 
 	const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -160,6 +164,36 @@ export async function saleorLogin(
 			user,
 		},
 	};
+}
+
+const TOKEN_REFRESH_MUTATION = `
+	mutation TokenRefresh($refreshToken: String!) {
+		tokenRefresh(refreshToken: $refreshToken) {
+			token
+			errors { field message code }
+		}
+	}
+`;
+
+interface SaleorTokenRefreshResult {
+	tokenRefresh?: {
+		token?: string;
+		errors?: Array<{ field?: string; message: string; code?: string }>;
+	};
+}
+
+/**
+ * Exchange a Saleor refresh token for a fresh Saleor access token.
+ * Returns null if Saleor rejects it (expired/revoked) — caller should then
+ * fail the OAuth refresh grant and force re-authentication.
+ */
+export async function saleorTokenRefresh(saleorRefreshToken: string): Promise<string | null> {
+	const result = await saleorGraphQL<SaleorTokenRefreshResult>(TOKEN_REFRESH_MUTATION, {
+		refreshToken: saleorRefreshToken,
+	});
+	const token = result?.tokenRefresh?.token;
+	if (!token || result?.tokenRefresh?.errors?.length) return null;
+	return token;
 }
 
 /**

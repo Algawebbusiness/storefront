@@ -34,34 +34,15 @@ import {
 } from "@/lib/protocols/shared/checkout-queries";
 import { ORDER_BY_ID_QUERY, type OrderByIdData } from "@/lib/protocols/shared/order-queries";
 import { processStripePayment } from "@/lib/protocols/shared/payment";
+import { isMcpApiKeyAuthorized } from "./api-key-auth";
 
 /**
- * Validate api_key against AGENT_API_KEYS env var.
- *
- * Returns `true` when:
- *   - `AGENT_API_KEYS` is empty (development mode, auth disabled), OR
- *   - the supplied `apiKey` appears in the env-configured set, OR
- *   - `apiKey` is `undefined` and we trust upstream auth (Phase F6:
- *     iframe-relayed `tools/call` arrives with agent identity already
- *     verified on the HTTP transport layer, so this tool no longer
- *     needs an explicit key in its args — see `cart-preview.ts` header).
- *
- * Only returns `false` when a non-matching key is *supplied*. That keeps
- * the "no key passed = trust transport" door open for F-stack tools
- * while still rejecting forged keys.
+ * Validate api_key for checkout tools. Delegates to the shared, fail-closed
+ * `isMcpApiKeyAuthorized` (the old "undefined ⇒ trust transport" default is now
+ * honored only in dev/test or with `MCP_TRUST_TRANSPORT=true`, since `/mcp` is
+ * a public transport — see `api-key-auth.ts`).
  */
-function validateApiKey(apiKey: string | undefined): boolean {
-	if (apiKey === undefined) return true;
-	const keys = process.env.AGENT_API_KEYS || "";
-	const validKeys = new Set(
-		keys
-			.split(",")
-			.map((k) => k.trim())
-			.filter(Boolean),
-	);
-	if (validKeys.size === 0) return true;
-	return validKeys.has(apiKey);
-}
+const validateApiKey = isMcpApiKeyAuthorized;
 
 function authError() {
 	return {
@@ -461,7 +442,8 @@ export function registerCheckoutTools(server: McpServer) {
 				};
 			}
 
-			// Fallback: order fetch failed; ship the minimal mutation echo.
+			// Fallback: order fetch failed AFTER payment + completion succeeded — report
+			// the order as PAID (it is) with totals unknown, never as unpaid/zero.
 			return {
 				content: [
 					{
@@ -473,9 +455,10 @@ export function registerCheckoutTools(server: McpServer) {
 									number: order.number,
 									status: order.status,
 									statusDisplay: order.status,
-									currency: "",
-									total: 0,
-									isPaid: false,
+									currency: null,
+									total: null,
+									isPaid: true,
+									detail: "Order created and paid; full receipt could not be loaded.",
 								},
 								null,
 								2,

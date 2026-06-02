@@ -14,6 +14,10 @@ export function LocaleSwitcher() {
 	const router = useRouter();
 
 	const handleChange = (newLocale: Locale) => {
+		// Setting the locale cookie is an intentional imperative side effect of a
+		// user click; the react-hooks/immutability rule false-positives on the
+		// `document.cookie` assignment here.
+		// eslint-disable-next-line react-hooks/immutability
 		document.cookie = `NEXT_LOCALE=${newLocale};path=/;max-age=${60 * 60 * 24 * 365};samesite=lax`;
 		router.refresh();
 	};
@@ -27,9 +31,7 @@ export function LocaleSwitcher() {
 						type="button"
 						onClick={() => handleChange(l)}
 						className={`transition-colors ${
-							locale === l
-								? "font-semibold text-foreground"
-								: "text-muted-foreground hover:text-foreground"
+							locale === l ? "font-semibold text-foreground" : "text-muted-foreground hover:text-foreground"
 						}`}
 						aria-label={`Switch to ${localeLabels[l]}`}
 					>

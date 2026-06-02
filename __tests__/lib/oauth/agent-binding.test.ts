@@ -13,10 +13,7 @@ describe("getAgentForOauthClient — Phase B7 mapping", () => {
 	});
 
 	it("returns null for unknown client_id even when mapping is set", () => {
-		vi.stubEnv(
-			"OAUTH_CLIENT_AGENT_MAPPING",
-			JSON.stringify({ "openai-chatgpt": "openai-prod" }),
-		);
+		vi.stubEnv("OAUTH_CLIENT_AGENT_MAPPING", JSON.stringify({ "openai-chatgpt": "openai-prod" }));
 		expect(getAgentForOauthClient("unknown")).toBeNull();
 	});
 
@@ -43,7 +40,7 @@ describe("getAgentForOauthClient — Phase B7 mapping", () => {
 	});
 
 	it("returns null when the mapped value is not a string", () => {
-		vi.stubEnv("OAUTH_CLIENT_AGENT_MAPPING", JSON.stringify({ "openai": 42 }));
+		vi.stubEnv("OAUTH_CLIENT_AGENT_MAPPING", JSON.stringify({ openai: 42 }));
 		expect(getAgentForOauthClient("openai")).toBeNull();
 	});
 });
@@ -56,8 +53,8 @@ describe("createTokenPair — agent_id JWT claim", () => {
 		process.env.OAUTH_JWT_SECRET = "test-secret-must-be-at-least-32-chars-long-yes";
 	}
 
-	it("omits agent_id claim when agentId is not provided", () => {
-		const { access_token } = createTokenPair({
+	it("omits agent_id claim when agentId is not provided", async () => {
+		const { access_token } = await createTokenPair({
 			userId: "u1",
 			email: "u@x.cz",
 			scope: "profile",
@@ -70,8 +67,8 @@ describe("createTokenPair — agent_id JWT claim", () => {
 		expect(payload?.agent_id).toBeUndefined();
 	});
 
-	it("includes agent_id claim when agentId is provided (B7 binding)", () => {
-		const { access_token } = createTokenPair({
+	it("includes agent_id claim when agentId is provided (B7 binding)", async () => {
+		const { access_token } = await createTokenPair({
 			userId: "u1",
 			email: "u@x.cz",
 			scope: "profile",
@@ -84,8 +81,8 @@ describe("createTokenPair — agent_id JWT claim", () => {
 		expect(payload?.agent_id).toBe("openai-prod");
 	});
 
-	it("propagates agent_id into the refresh token (so refresh preserves binding)", () => {
-		const { refresh_token } = createTokenPair({
+	it("propagates agent_id into the refresh token (so refresh preserves binding)", async () => {
+		const { refresh_token } = await createTokenPair({
 			userId: "u1",
 			email: "u@x.cz",
 			scope: "profile",

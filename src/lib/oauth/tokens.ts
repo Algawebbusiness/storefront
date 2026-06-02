@@ -18,6 +18,7 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { getJwtSecret, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL } from "./config";
+import { getStore } from "@/lib/store";
 
 /** Base64url encode */
 function base64url(data: string | Buffer): string {
@@ -44,30 +45,32 @@ export interface JwtPayload {
 	 */
 	agent_id?: string;
 	type: "access" | "refresh";
-	jti: string; // unique token ID (for refresh token rotation)
-	saleor_token?: string; // Saleor access token (only in server memory, not exposed)
-	saleor_refresh_token?: string;
+	jti: string; // unique token ID (for refresh token rotation + server-side token lookup)
 	iat: number;
 	exp: number;
 }
 
-/** Sign a JWT with HMAC-SHA256 */
-export function signJwt(payload: Omit<JwtPayload, "iat" | "exp" | "jti">, expiresIn: number): string {
+/** Sign a JWT with HMAC-SHA256, returning the token and its generated jti. */
+function makeJwt(
+	payload: Omit<JwtPayload, "iat" | "exp" | "jti">,
+	expiresIn: number,
+): { token: string; jti: string } {
 	const secret = getJwtSecret();
 	const now = Math.floor(Date.now() / 1000);
+	const jti = randomBytes(16).toString("hex");
 
-	const fullPayload: JwtPayload = {
-		...payload,
-		jti: randomBytes(16).toString("hex"),
-		iat: now,
-		exp: now + expiresIn,
-	};
+	const fullPayload: JwtPayload = { ...payload, jti, iat: now, exp: now + expiresIn };
 
 	const header = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
 	const body = base64url(JSON.stringify(fullPayload));
 	const signature = createHmac("sha256", secret).update(`${header}.${body}`).digest();
 
-	return `${header}.${body}.${base64url(signature)}`;
+	return { token: `${header}.${body}.${base64url(signature)}`, jti };
+}
+
+/** Sign a JWT with HMAC-SHA256. */
+export function signJwt(payload: Omit<JwtPayload, "iat" | "exp" | "jti">, expiresIn: number): string {
+	return makeJwt(payload, expiresIn).token;
 }
 
 /** Verify a JWT and return the payload, or null if invalid */
@@ -77,10 +80,21 @@ export function verifyJwt(token: string): JwtPayload | null {
 
 	const [header, body, sig] = parts;
 
-	// Verify signature (timing-safe)
+	// Reject anything but our HMAC alg (defends against alg confusion). The
+	// header is base64url; decode and assert before trusting the token.
+	try {
+		const decodedHeader = JSON.parse(base64urlDecode(header)) as { alg?: string; typ?: string };
+		if (decodedHeader.alg !== "HS256") return null;
+	} catch {
+		return null;
+	}
+
+	// Verify signature (timing-safe). The signature is base64URL, so decode it
+	// as such — standard base64 mis-decodes the `-`/`_` chars (intermittent
+	// valid-token rejection).
 	const secret = getJwtSecret();
 	const expected = createHmac("sha256", secret).update(`${header}.${body}`).digest();
-	const actual = Buffer.from(sig + "=".repeat((4 - (sig.length % 4)) % 4), "base64");
+	const actual = Buffer.from(sig, "base64url");
 
 	if (expected.length !== actual.length) return null;
 	if (!timingSafeEqual(expected, actual)) return null;
@@ -103,8 +117,18 @@ export function verifyJwt(token: string): JwtPayload | null {
 	return payload;
 }
 
-/** Create an access + refresh token pair */
-export function createTokenPair(params: {
+/**
+ * Create an access + refresh token pair.
+ *
+ * SECURITY (CWE-522): the customer's Saleor tokens are NOT embedded in the
+ * JWTs (they would be readable by anyone holding the base64 token). They are
+ * stored server-side keyed by the OAuth token's jti and looked up only where
+ * needed (userinfo / refresh), never travelling to the client.
+ */
+const SALEOR_AT_PREFIX = "oauth:saleor_at:";
+const SALEOR_RT_PREFIX = "oauth:saleor_rt:";
+
+export async function createTokenPair(params: {
 	userId: string;
 	email: string;
 	scope: string;
@@ -113,7 +137,7 @@ export function createTokenPair(params: {
 	saleorRefreshToken: string;
 	/** Phase B7: optional agent identity bound to this OAuth client. */
 	agentId?: string;
-}): { access_token: string; refresh_token: string; expires_in: number } {
+}): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
 	const basePayload = {
 		sub: params.userId,
 		email: params.email,
@@ -122,25 +146,30 @@ export function createTokenPair(params: {
 		...(params.agentId ? { agent_id: params.agentId } : {}),
 	};
 
-	const access_token = signJwt(
-		{
-			...basePayload,
-			type: "access" as const,
-			saleor_token: params.saleorToken,
-		},
-		ACCESS_TOKEN_TTL,
-	);
+	const access = makeJwt({ ...basePayload, type: "access" as const }, ACCESS_TOKEN_TTL);
+	const refresh = makeJwt({ ...basePayload, type: "refresh" as const }, REFRESH_TOKEN_TTL);
 
-	const refresh_token = signJwt(
-		{
-			...basePayload,
-			type: "refresh" as const,
-			saleor_refresh_token: params.saleorRefreshToken,
-		},
-		REFRESH_TOKEN_TTL,
-	);
+	// Bind the Saleor tokens to the OAuth tokens' jtis, server-side only.
+	const store = getStore();
+	await store.set(SALEOR_AT_PREFIX + access.jti, params.saleorToken, ACCESS_TOKEN_TTL);
+	await store.set(SALEOR_RT_PREFIX + refresh.jti, params.saleorRefreshToken, REFRESH_TOKEN_TTL);
 
-	return { access_token, refresh_token, expires_in: ACCESS_TOKEN_TTL };
+	return { access_token: access.token, refresh_token: refresh.token, expires_in: ACCESS_TOKEN_TTL };
+}
+
+/** Look up the Saleor access token bound to an OAuth access token's jti. */
+export async function getSaleorAccessToken(jti: string): Promise<string | null> {
+	return getStore().get(SALEOR_AT_PREFIX + jti);
+}
+
+/** Look up the Saleor refresh token bound to an OAuth refresh token's jti. */
+export async function getSaleorRefreshToken(jti: string): Promise<string | null> {
+	return getStore().get(SALEOR_RT_PREFIX + jti);
+}
+
+/** Drop the Saleor refresh token mapping for a (rotated/revoked) jti. */
+export async function deleteSaleorRefreshToken(jti: string): Promise<void> {
+	await getStore().del(SALEOR_RT_PREFIX + jti);
 }
 
 // ============================================================================
@@ -148,20 +177,19 @@ export function createTokenPair(params: {
 // ============================================================================
 
 /**
- * Set of revoked refresh token JTIs.
- * In production, this should be backed by Redis or a database.
- * In-memory is acceptable for a single-instance deployment.
+ * Revoked refresh-token JTIs, kept in the durable store (`@/lib/store`) so a
+ * revoked token is rejected across all instances, not just the one that
+ * revoked it. The marker is given the refresh-token TTL, after which the token
+ * is expired anyway and the entry can lapse.
  */
-const revokedTokens = new Set<string>();
+const REVOKED_PREFIX = "oauth:revoked:";
 
-/** Revoke a refresh token by its JTI */
-export function revokeRefreshToken(jti: string): void {
-	revokedTokens.add(jti);
-	// Cleanup: remove entries older than REFRESH_TOKEN_TTL
-	// (In practice, the set stays small because tokens expire)
+/** Revoke a refresh token by its JTI. */
+export async function revokeRefreshToken(jti: string): Promise<void> {
+	await getStore().set(REVOKED_PREFIX + jti, "1", REFRESH_TOKEN_TTL);
 }
 
-/** Check if a refresh token has been revoked */
-export function isRefreshTokenRevoked(jti: string): boolean {
-	return revokedTokens.has(jti);
+/** Check if a refresh token has been revoked. */
+export async function isRefreshTokenRevoked(jti: string): Promise<boolean> {
+	return (await getStore().get(REVOKED_PREFIX + jti)) !== null;
 }

@@ -6,7 +6,7 @@ import { getTranslations } from "next-intl/server";
 import { isPayloadConfigured, getPayloadMediaUrl } from "@/lib/payload/client";
 import { getPublishedPosts } from "@/lib/payload/queries";
 import type { PayloadPost, PayloadMedia } from "@/lib/payload/types";
-import { buildPageMetadata, buildBreadcrumbListJsonLd } from "@/lib/seo";
+import { buildPageMetadata, buildBreadcrumbListJsonLd, JsonLdScript } from "@/lib/seo";
 import { formatDate } from "@/config/locale";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -41,12 +41,7 @@ export default async function BlogPage(props: {
 
 	return (
 		<div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-			{breadcrumbJsonLd && (
-				<script
-					type="application/ld+json"
-					dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
-				/>
-			)}
+			<JsonLdScript data={breadcrumbJsonLd} />
 
 			<div className="mb-8">
 				<h1 className="text-3xl font-semibold tracking-tight">{t("title")}</h1>
@@ -113,7 +108,7 @@ function BlogPostCard({ post, channel }: { post: PayloadPost; channel: string })
 	return (
 		<Link
 			href={`/${channel}/blog/${post.slug}`}
-			className="group block overflow-hidden rounded-lg border border-border transition-colors hover:border-foreground/20"
+			className="hover:border-foreground/20 group block overflow-hidden rounded-lg border border-border transition-colors"
 		>
 			{coverImage?.url && (
 				<div className="relative aspect-[16/9] overflow-hidden bg-muted">

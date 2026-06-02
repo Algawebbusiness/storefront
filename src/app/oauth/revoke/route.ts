@@ -43,7 +43,7 @@ export async function POST(request: Request) {
 	// Verify and revoke
 	const payload = verifyJwt(token);
 	if (payload && payload.type === "refresh" && payload.client_id === client_id) {
-		revokeRefreshToken(payload.jti);
+		await revokeRefreshToken(payload.jti);
 		console.log(`[OAuth] Token revoked: client=${client_id} user=${payload.sub}`);
 	}
 

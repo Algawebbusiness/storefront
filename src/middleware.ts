@@ -17,6 +17,7 @@ export function middleware(request: NextRequest) {
 			path: "/",
 			maxAge: 60 * 60 * 24 * 365, // 1 year
 			sameSite: "lax",
+			secure: process.env.NODE_ENV === "production",
 		});
 	}
 

@@ -230,15 +230,37 @@ export function buildCollectionPageJsonLd(options: {
 }
 
 /**
- * JSON-LD Script component helper
+ * Serialize JSON-LD safely for embedding inside a `<script>` element.
+ *
+ * SECURITY: `JSON.stringify` does NOT escape `<`, `>` or `&`, so a string field
+ * containing `</script>` (e.g. an attacker-influenced product/category name)
+ * would break out of the script element and inject markup (stored XSS, CWE-79).
+ * We HTML-escape those characters as Unicode escapes (still valid JSON, parsed
+ * identically by JSON-LD consumers) plus the JS line separators U+2028/U+2029.
+ */
+export function serializeJsonLd(data: object | null): string | null {
+	if (!data) return null;
+	return JSON.stringify(data)
+		.replace(/</g, "\\u003c")
+		.replace(/>/g, "\\u003e")
+		.replace(/&/g, "\\u0026")
+		.replace(/\u2028/g, "\\u2028")
+		.replace(/\u2029/g, "\\u2029");
+}
+
+/**
+ * JSON-LD Script props helper. Prefer the `<JsonLdScript>` component
+ * (`@/lib/seo`) at call sites; this is kept for spread-style usage.
  *
  * @example
- * <script {...jsonLdScriptProps(productJsonLd)} />
+ * const props = jsonLdScriptProps(productJsonLd);
+ * {props && <script {...props} />}
  */
 export function jsonLdScriptProps(data: object | null) {
-	if (!data) return null;
+	const __html = serializeJsonLd(data);
+	if (__html === null) return null;
 	return {
 		type: "application/ld+json",
-		dangerouslySetInnerHTML: { __html: JSON.stringify(data) },
+		dangerouslySetInnerHTML: { __html },
 	};
 }

@@ -10,6 +10,7 @@
 
 import { mapCheckoutToProtocol } from "@/lib/protocols/shared/checkout-mapper";
 import { CHECKOUT_BY_ID_QUERY, type CheckoutByIdData } from "@/lib/protocols/shared/checkout-queries";
+import { ownsCheckout } from "@/lib/protocols/shared/ownership";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
 import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import { buildUcpMeta } from "@/lib/protocols/ucp/capabilities";
@@ -33,7 +34,7 @@ export const POST = withUcpRoute<CheckoutParams>(
 				{ status: 500 },
 			);
 		}
-		if (!fetchResult.data.checkout) {
+		if (!fetchResult.data.checkout || !ownsCheckout(fetchResult.data.checkout, auth)) {
 			return signedJsonResponse(
 				{ error: { code: "not_found", message: "Checkout session not found" } },
 				{ status: 404 },

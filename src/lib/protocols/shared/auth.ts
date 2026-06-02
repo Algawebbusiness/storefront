@@ -9,17 +9,22 @@
  *   3. OAuth2 JWT (orthogonal): Authorization: Bearer eyJ...
  *      → customer-scoped, returns userContext for Saleor mutations.
  *
- * Use `verifyAgentRequest` for new code (returns AgentIdentity + consumed
- * body). Use `validateAgentApiKey` only for backward-compat call sites that
- * haven't been migrated to the signed flow yet.
+ * All routes use the single async `verifyAgentRequest` entry point (returns
+ * AgentIdentity + consumed body + optional OAuth userContext). The legacy
+ * synchronous `validateAgentApiKey`/`validateOAuthToken` wrappers were removed
+ * once every ACP/UCP route was migrated (Block 4).
  */
 
 import { lookupAgent } from "./agent-registry";
 import type { AgentIdentity } from "./agent-registry-types";
 import { parseSignatureHeader } from "./response";
-import { verifyDetached } from "./signing";
-import type { AgentAuthResult } from "./types";
+import { buildSigningString, sha256Hex, verifyDetached } from "./signing";
 import { verifyJwt, type JwtPayload } from "@/lib/oauth/tokens";
+import { mapOAuthToAgentScopes } from "@/lib/oauth/scopes";
+import { getStore } from "@/lib/store";
+
+/** Max clock skew (seconds) for a signed request's UCP-Timestamp. */
+const MAX_SIGNATURE_SKEW_S = 300;
 
 /**
  * Synthetic agent record representing the deprecated AGENT_API_KEYS bearer
@@ -36,14 +41,7 @@ export const SYNTHETIC_LEGACY_AGENT: AgentIdentity = {
 	platform: "custom",
 	status: "active",
 	public_key: "",
-	scope: [
-		"catalog.read",
-		"cart.create",
-		"cart.update",
-		"checkout.create",
-		"checkout.complete",
-		"order.read",
-	],
+	scope: ["catalog.read", "cart.create", "cart.update", "checkout.create", "checkout.complete", "order.read"],
 	spending_limit: { per_session_cents: 10_000_00, per_day_cents: null, per_month_cents: null },
 	rate_limit: { requests_per_minute: 30, sessions_per_day: 1000 },
 	created_at: "2026-05-01T00:00:00Z",
@@ -116,51 +114,6 @@ export async function verifyAgentRequest(request: Request): Promise<AgentAuthOut
 	return { ok: false, status: 401, reason: "Missing UCP-Signature or Authorization header" };
 }
 
-/**
- * Legacy synchronous wrapper around `Authorization: Bearer` that does NOT
- * verify signed requests or consume the body. Kept for routes that haven't
- * been migrated to `verifyAgentRequest` yet — new code should not use it.
- *
- * @deprecated Use `verifyAgentRequest` instead. Will be removed when all
- *             routes finish the B9 migration.
- */
-export function validateAgentApiKey(request: Request): AgentAuthResult {
-	const authHeader = request.headers.get("Authorization");
-
-	if (!authHeader || !authHeader.startsWith("Bearer ")) {
-		return { valid: false };
-	}
-
-	const token = authHeader.slice(7).trim();
-
-	if (token.startsWith("eyJ")) {
-		return validateOAuthToken(token, request);
-	}
-
-	const validKeys = getValidApiKeys();
-	const acpKey = process.env.ACP_API_KEY;
-	if (acpKey && token === acpKey) {
-		return { valid: true, agentId: "acp" };
-	}
-
-	if (validKeys.size === 0) {
-		return { valid: true, agentId: "anonymous" };
-	}
-
-	if (!validKeys.has(token)) {
-		return { valid: false };
-	}
-
-	const ucpAgentHeader = request.headers.get("UCP-Agent");
-	const profileUrl = ucpAgentHeader?.match(/profile="([^"]+)"/)?.[1];
-
-	return {
-		valid: true,
-		agentId: token.slice(0, 8),
-		...(profileUrl && { profileUrl }),
-	};
-}
-
 /** Create a 401 Unauthorized response */
 export function unauthorizedResponse(message = "Invalid or missing API key"): Response {
 	return Response.json(
@@ -197,6 +150,18 @@ async function verifySignedRequest(
 		return { ok: false, status: 401, reason: `Unsupported signature algorithm: ${parsed.alg}` };
 	}
 
+	// ── Anti-replay inputs (CWE-347): timestamp + per-request nonce ──
+	const timestamp = request.headers.get("UCP-Timestamp");
+	const nonce = request.headers.get("UCP-Nonce");
+	if (!timestamp || !nonce) {
+		return { ok: false, status: 401, reason: "Missing UCP-Timestamp or UCP-Nonce header" };
+	}
+	const tsNum = Number(timestamp);
+	const nowS = Math.floor(Date.now() / 1000);
+	if (!Number.isFinite(tsNum) || Math.abs(nowS - tsNum) > MAX_SIGNATURE_SKEW_S) {
+		return { ok: false, status: 401, reason: "Request timestamp outside allowed window" };
+	}
+
 	// UCP-Agent may be a bare ID or a structured value ("id=...,profile=...").
 	const agentId = extractAgentId(agentIdHeader);
 	const profileUrl = extractProfileUrl(agentIdHeader);
@@ -212,10 +177,33 @@ async function verifySignedRequest(
 		return { ok: false, status: lookup.reason === "unknown" ? 401 : 403, reason };
 	}
 
-	const bodyText = await safeReadBody(request);
-	const valid = await verifyDetached(bodyText, parsed.sig, lookup.agent.public_key);
+	// Read the body strictly — a read failure must NOT fail open (was "" before).
+	let bodyText: string;
+	try {
+		bodyText = await request.text();
+	} catch {
+		return { ok: false, status: 401, reason: "Could not read request body" };
+	}
+
+	// Verify the signature over the canonical request string (method + path +
+	// query + timestamp + nonce + body hash), not the bare body.
+	const url = new URL(request.url);
+	const signingString = buildSigningString({
+		method: request.method,
+		pathWithQuery: url.pathname + url.search,
+		timestamp,
+		nonce,
+		bodyHashHex: await sha256Hex(bodyText),
+	});
+	const valid = await verifyDetached(signingString, parsed.sig, lookup.agent.public_key);
 	if (!valid) {
 		return { ok: false, status: 401, reason: "Invalid signature" };
+	}
+
+	// Reject a replayed nonce (atomic set-if-absent, scoped per agent, TTL = skew).
+	const fresh = await getStore().setnx(`ucp:nonce:${lookup.agent.id}:${nonce}`, "1", MAX_SIGNATURE_SKEW_S);
+	if (!fresh) {
+		return { ok: false, status: 401, reason: "Replayed request nonce" };
 	}
 
 	return {
@@ -244,19 +232,28 @@ async function verifyOAuthBearer(
 
 	const profileUrl = extractProfileUrl(request.headers.get("UCP-Agent"));
 
+	// SECURITY (CWE-269): the effective protocol scope is what the customer
+	// CONSENTED to (mapped from the OAuth scopes), never the full synthetic set.
+	const consentedScopes = mapOAuthToAgentScopes(payload.scope || "");
+
 	// Phase B7: if the token carries an agent_id claim, resolve the real
-	// AgentIdentity from the registry. Falls back to SYNTHETIC_LEGACY_AGENT
-	// stamped with the client_id when no mapping exists.
+	// AgentIdentity from the registry; the granted scope is then the
+	// intersection of the registered agent's scope and the consented scope.
+	// Without a mapping, the agent gets ONLY the consented scope.
 	let agent: AgentIdentity = {
 		...SYNTHETIC_LEGACY_AGENT,
 		id: payload.client_id ?? "oauth-bearer",
+		scope: consentedScopes,
 	};
 	let isLegacy = true;
 	if (payload.agent_id) {
 		const lookup = await lookupAgent(payload.agent_id);
 		if (lookup.found) {
-			agent = lookup.agent;
 			isLegacy = false;
+			agent = {
+				...lookup.agent,
+				scope: lookup.agent.scope.filter((s) => consentedScopes.includes(s)),
+			};
 		}
 	}
 
@@ -270,16 +267,14 @@ async function verifyOAuthBearer(
 			userId: payload.sub,
 			email: payload.email,
 			scope: payload.scope,
-			saleorToken: payload.saleor_token || "",
+			// Saleor access token is no longer embedded in the JWT (CWE-522);
+			// ownership checks use the verified email, not this token.
+			saleorToken: "",
 		},
 	};
 }
 
-function verifyLegacyBearer(
-	token: string,
-	request: Request,
-	bodyText: string,
-): AgentAuthOutcome {
+function verifyLegacyBearer(token: string, request: Request, bodyText: string): AgentAuthOutcome {
 	const validKeys = getValidApiKeys();
 	const acpKey = process.env.ACP_API_KEY;
 
@@ -289,7 +284,13 @@ function verifyLegacyBearer(
 	}
 
 	if (validKeys.size === 0) {
-		// Dev mode: no keys configured, accept anyone (preserves legacy behaviour).
+		// SECURITY (CWE-1188): no AGENT_API_KEYS configured. Permissive only in
+		// dev/test (or explicit opt-in); in production fail closed so a deploy
+		// that forgot to configure auth doesn't accept everyone as a full-scope
+		// agent with a $10k spending cap.
+		if (!legacyAnonymousAllowed()) {
+			return { ok: false, status: 401, reason: "Agent authentication is not configured" };
+		}
 		return acceptLegacy(request, bodyText, "anonymous");
 	}
 
@@ -346,30 +347,12 @@ function getValidApiKeys(): Set<string> {
 	);
 }
 
-function validateOAuthToken(token: string, request: Request): AgentAuthResult {
-	let payload: JwtPayload | null;
-	try {
-		payload = verifyJwt(token);
-	} catch {
-		return { valid: false };
-	}
-
-	if (!payload || payload.type !== "access") {
-		return { valid: false };
-	}
-
-	const ucpAgentHeader = request.headers.get("UCP-Agent");
-	const profileUrl = ucpAgentHeader?.match(/profile="([^"]+)"/)?.[1];
-
-	return {
-		valid: true,
-		agentId: payload.client_id,
-		...(profileUrl && { profileUrl }),
-		userContext: {
-			userId: payload.sub,
-			email: payload.email,
-			scope: payload.scope,
-			saleorToken: payload.saleor_token || "",
-		},
-	};
+/**
+ * Whether the empty-`AGENT_API_KEYS` legacy bearer fallback may accept callers.
+ * Permissive in dev/test; in production requires an explicit
+ * `UCP_ALLOW_ANONYMOUS_LEGACY=true` opt-in so an unconfigured deploy fails
+ * closed instead of granting full-scope access to anyone (CWE-1188).
+ */
+function legacyAnonymousAllowed(): boolean {
+	return process.env.NODE_ENV !== "production" || process.env.UCP_ALLOW_ANONYMOUS_LEGACY === "true";
 }

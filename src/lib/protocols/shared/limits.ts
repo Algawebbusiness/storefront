@@ -1,61 +1,42 @@
 /**
- * Per-agent rate limits and spending caps (Phase B5).
+ * Per-agent rate limits and spending caps (Phase B5), backed by the durable
+ * store (`@/lib/store`) so counters hold across instances and cold starts.
  *
- * Two windows, two storage strategies:
- *
- *   1. Short window (per-minute requests) — in-memory `Map<agent_id, …>`.
- *      Resets every 60s. Per-process; multi-instance deploys see drift,
- *      acceptable for rate limiting (occasional over-the-cap is harmless).
- *
- *   2. Long window (per-day sessions, per-day/per-month spending) —
- *      Payload aggregation when available, best-effort skip otherwise.
- *      Phase E may swap this for Redis or database counters.
+ *   - requests_per_minute  → fixed-window counter (`INCR` + `EXPIRE`)
+ *   - sessions_per_day     → per-day set of session IDs (`SADD`/`SCARD`)
+ *   - per_day/per_month spend → cumulative counters, incremented by
+ *     `recordSpend()` after a successful charge and read here for the cap check
  *
  * The check returns a discriminated union so the route can early-return 429
- * with a Retry-After header. Spending checks need an estimated amount; pass
- * `requestedAmountCents` when known (cart total at the time of completion).
+ * with a Retry-After header. `null` limit values mean "unlimited".
  *
- * `null` limit values mean "unlimited" — every check passes for that window.
+ * NOTE: `per_session_cents` still caps a single request's amount, not
+ * cumulative session spend, and the read-here / record-after-charge sequence is
+ * not yet atomic — both are addressed by the reserve/commit work in Block 8.
  */
 
-import { payloadFetch } from "@/lib/payload/client";
 import type { AgentIdentity } from "./agent-registry-types";
+import { getStore, _resetStore } from "@/lib/store";
 
-export type LimitCheckResult =
-	| { allowed: true }
-	| { allowed: false; reason: string; retry_after_s?: number };
+export type LimitCheckResult = { allowed: true } | { allowed: false; reason: string; retry_after_s?: number };
 
-interface BucketEntry {
-	count: number;
-	windowStartMs: number;
-}
+const PER_MINUTE_WINDOW_S = 60;
+const DAY_TTL_S = 90_000; // ~25h, so a per-day key lives just past midnight
+const SPEND_DAY_TTL_S = 2 * 24 * 60 * 60;
+const SPEND_MONTH_TTL_S = 32 * 24 * 60 * 60;
 
-const PER_MINUTE_WINDOW_MS = 60_000;
-const requestBuckets = new Map<string, BucketEntry>();
-const sessionBuckets = new Map<string, Set<string>>(); // agent_id → set of session IDs seen today
-let sessionBucketsDayStart = startOfUtcDay();
-
-/**
- * Check whether the agent may proceed with this request.
- *
- * Optional `requestedAmountCents` enables spending-cap checks; pass `null`
- * when the request doesn't carry money (catalog read, cart-level CRUD
- * before complete).
- */
 export async function checkLimits(
 	agent: AgentIdentity,
 	requestedAmountCents?: number | null,
 	sessionId?: string | null,
 ): Promise<LimitCheckResult> {
-	rotateSessionBucketsIfNewDay();
-
-	// 1. requests_per_minute (in-memory, hot path)
-	const rpmCheck = checkRequestsPerMinute(agent.id, agent.rate_limit.requests_per_minute);
+	// 1. requests_per_minute
+	const rpmCheck = await checkRequestsPerMinute(agent.id, agent.rate_limit.requests_per_minute);
 	if (!rpmCheck.allowed) return rpmCheck;
 
-	// 2. sessions_per_day (in-memory tally of unique session IDs today)
+	// 2. sessions_per_day
 	if (sessionId) {
-		const sessionCheck = checkSessionsPerDay(agent.id, sessionId, agent.rate_limit.sessions_per_day);
+		const sessionCheck = await checkSessionsPerDay(agent.id, sessionId, agent.rate_limit.sessions_per_day);
 		if (!sessionCheck.allowed) return sessionCheck;
 	}
 
@@ -69,7 +50,6 @@ export async function checkLimits(
 			};
 		}
 
-		// Daily and monthly require historical aggregation.
 		const dayCap = agent.spending_limit.per_day_cents;
 		const monthCap = agent.spending_limit.per_month_cents;
 		if (dayCap !== null || monthCap !== null) {
@@ -80,10 +60,7 @@ export async function checkLimits(
 					reason: `Day spending cap exceeded (${aggregates.spent_today_cents}¢ + ${requestedAmountCents}¢ > ${dayCap}¢)`,
 				};
 			}
-			if (
-				monthCap !== null &&
-				aggregates.spent_this_month_cents + requestedAmountCents > monthCap
-			) {
+			if (monthCap !== null && aggregates.spent_this_month_cents + requestedAmountCents > monthCap) {
 				return {
 					allowed: false,
 					reason: `Month spending cap exceeded (${aggregates.spent_this_month_cents}¢ + ${requestedAmountCents}¢ > ${monthCap}¢)`,
@@ -95,122 +72,99 @@ export async function checkLimits(
 	return { allowed: true };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Short window — in-memory
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Record a committed charge against the agent's day + month spend counters.
+ * Call AFTER a successful checkout completion so caps reflect real spend.
+ */
+export async function recordSpend(agentId: string, amountCents: number): Promise<void> {
+	if (!(amountCents > 0)) return;
+	const store = getStore();
+	const dayKey = `spend:day:${agentId}:${utcDayKey()}`;
+	const monthKey = `spend:month:${agentId}:${utcMonthKey()}`;
+	await store.incrby(dayKey, amountCents);
+	await store.expire(dayKey, SPEND_DAY_TTL_S);
+	await store.incrby(monthKey, amountCents);
+	await store.expire(monthKey, SPEND_MONTH_TTL_S);
+}
 
-function checkRequestsPerMinute(agentId: string, capPerMinute: number): LimitCheckResult {
+// ─────────────────────────── windows ────────────────────────────────────────
+
+async function checkRequestsPerMinute(agentId: string, capPerMinute: number): Promise<LimitCheckResult> {
 	if (capPerMinute <= 0) return { allowed: true };
-	const now = Date.now();
-	const entry = requestBuckets.get(agentId);
-
-	if (!entry || now - entry.windowStartMs >= PER_MINUTE_WINDOW_MS) {
-		requestBuckets.set(agentId, { count: 1, windowStartMs: now });
-		return { allowed: true };
-	}
-
-	if (entry.count + 1 > capPerMinute) {
-		const retryAfterMs = PER_MINUTE_WINDOW_MS - (now - entry.windowStartMs);
+	const store = getStore();
+	const nowS = Math.floor(Date.now() / 1000);
+	const minute = Math.floor(nowS / 60);
+	const key = `rl:rpm:${agentId}:${minute}`;
+	const count = await store.incr(key);
+	if (count === 1) await store.expire(key, PER_MINUTE_WINDOW_S);
+	if (count > capPerMinute) {
 		return {
 			allowed: false,
 			reason: `Rate limit exceeded: ${capPerMinute} req/min`,
-			retry_after_s: Math.max(1, Math.ceil(retryAfterMs / 1000)),
+			retry_after_s: Math.max(1, PER_MINUTE_WINDOW_S - (nowS % 60)),
 		};
 	}
-
-	entry.count += 1;
 	return { allowed: true };
 }
 
-function checkSessionsPerDay(
+async function checkSessionsPerDay(
 	agentId: string,
 	sessionId: string,
 	capPerDay: number,
-): LimitCheckResult {
+): Promise<LimitCheckResult> {
 	if (capPerDay <= 0) return { allowed: true };
-	let bucket = sessionBuckets.get(agentId);
-	if (!bucket) {
-		bucket = new Set();
-		sessionBuckets.set(agentId, bucket);
-	}
-
-	if (bucket.has(sessionId)) return { allowed: true };
-	if (bucket.size + 1 > capPerDay) {
+	const store = getStore();
+	const key = `rl:sess:${agentId}:${utcDayKey()}`;
+	if (await store.sismember(key, sessionId)) return { allowed: true };
+	const size = await store.scard(key);
+	if (size + 1 > capPerDay) {
 		return {
 			allowed: false,
 			reason: `Sessions/day cap exceeded: ${capPerDay}`,
 			retry_after_s: secondsToTomorrow(),
 		};
 	}
-	bucket.add(sessionId);
+	await store.sadd(key, sessionId);
+	await store.expire(key, DAY_TTL_S);
 	return { allowed: true };
 }
 
-function rotateSessionBucketsIfNewDay(): void {
-	const today = startOfUtcDay();
-	if (today !== sessionBucketsDayStart) {
-		sessionBuckets.clear();
-		sessionBucketsDayStart = today;
-	}
-}
-
-function startOfUtcDay(): number {
-	const d = new Date();
-	d.setUTCHours(0, 0, 0, 0);
-	return d.getTime();
-}
-
-function secondsToTomorrow(): number {
-	const tomorrow = startOfUtcDay() + 24 * 60 * 60 * 1000;
-	return Math.max(1, Math.ceil((tomorrow - Date.now()) / 1000));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Long window — Payload aggregation, best-effort
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────── spend read ─────────────────────────────────────
 
 interface SpentAggregates {
 	spent_today_cents: number;
 	spent_this_month_cents: number;
 }
 
-interface PayloadAggregateResponse {
-	spent_today_cents?: number;
-	spent_this_month_cents?: number;
-}
-
-/**
- * Pull cumulative spending for an agent from Payload's agent-activity
- * collection. Without Payload, returns zeros — daily/monthly caps then
- * effectively only see the current request. This is documented as a Phase
- * B5 limitation; Phase E ships proper persistent counters.
- */
 async function fetchSpentAggregates(agentId: string): Promise<SpentAggregates> {
-	if (!process.env.PAYLOAD_API_URL) {
-		return { spent_today_cents: 0, spent_this_month_cents: 0 };
-	}
-	try {
-		const escaped = encodeURIComponent(agentId);
-		const result = await payloadFetch<PayloadAggregateResponse>(
-			`/agent-activity/aggregate?agent_id=${escaped}`,
-			60,
-		);
-		return {
-			spent_today_cents: result?.spent_today_cents ?? 0,
-			spent_this_month_cents: result?.spent_this_month_cents ?? 0,
-		};
-	} catch {
-		return { spent_today_cents: 0, spent_this_month_cents: 0 };
-	}
+	const store = getStore();
+	const [day, month] = await Promise.all([
+		store.get(`spend:day:${agentId}:${utcDayKey()}`),
+		store.get(`spend:month:${agentId}:${utcMonthKey()}`),
+	]);
+	return {
+		spent_today_cents: Number(day) || 0,
+		spent_this_month_cents: Number(month) || 0,
+	};
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Test helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────── time helpers ───────────────────────────────────
 
-/** Drop in-memory buckets so tests get a clean slate. */
+function utcDayKey(): string {
+	return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+}
+function utcMonthKey(): string {
+	return new Date().toISOString().slice(0, 7); // YYYY-MM
+}
+function secondsToTomorrow(): number {
+	const d = new Date();
+	d.setUTCHours(24, 0, 0, 0);
+	return Math.max(1, Math.ceil((d.getTime() - Date.now()) / 1000));
+}
+
+// ─────────────────────────── test helper ────────────────────────────────────
+
+/** Drop durable counters so tests get a clean slate (resets the store singleton). */
 export function _resetLimitBuckets(): void {
-	requestBuckets.clear();
-	sessionBuckets.clear();
-	sessionBucketsDayStart = startOfUtcDay();
+	_resetStore();
 }

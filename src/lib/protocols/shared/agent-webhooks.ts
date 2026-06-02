@@ -22,6 +22,7 @@
 
 import { logAgentAction } from "./agent-log";
 import { getSigningKey, signPayload } from "./signing";
+import { validateOutboundWebhookUrl } from "./url-guard";
 
 /** A single status-change event delivered to the agent. */
 export interface AgentEvent {
@@ -61,6 +62,16 @@ export async function notifyAgent(
 		sleepMs?: (ms: number) => Promise<void>;
 	} = {},
 ): Promise<NotifyResult> {
+	// SECURITY (SSRF): defense-in-depth. The URL is validated when an agent
+	// registers it, but re-check here before every server-side fetch in case a
+	// stored value predates the guard or arrives via another path (CWE-918).
+	const guard = validateOutboundWebhookUrl(webhook_url);
+	if (!guard.ok) {
+		const result: NotifyResult = { delivered: false, attempts: 0, last_error: `blocked: ${guard.reason}` };
+		logDelivery(event, webhook_url, result);
+		return result;
+	}
+
 	const max = opts.max_attempts ?? MAX_ATTEMPTS;
 	const sleep = opts.sleepMs ?? defaultSleep;
 	const enriched: AgentEvent = {
@@ -84,6 +95,9 @@ export async function notifyAgent(
 					"UCP-Event-Type": enriched.type,
 				},
 				body,
+				// SECURITY (SSRF): never follow redirects — a 3xx could bounce the
+				// signed request to an internal target. Treat 3xx as a failed attempt.
+				redirect: "manual",
 				signal: AbortSignal.timeout(10_000),
 			});
 			lastStatus = res.status;
@@ -124,7 +138,9 @@ function defaultSleep(ms: number): Promise<void> {
 function logDelivery(event: AgentEvent, url: string, result: NotifyResult): void {
 	const safeUrl = url.replace(/[\r\n]/g, "");
 	console.log(
-		`[agent-webhook] ${event.type} → ${safeUrl} delivered=${result.delivered} attempts=${result.attempts}${result.last_status ? ` status=${result.last_status}` : ""}${result.last_error ? ` error="${result.last_error.replace(/"/g, '\\"')}"` : ""}`,
+		`[agent-webhook] ${event.type} → ${safeUrl} delivered=${result.delivered} attempts=${result.attempts}${
+			result.last_status ? ` status=${result.last_status}` : ""
+		}${result.last_error ? ` error="${result.last_error.replace(/"/g, '\\"')}"` : ""}`,
 	);
 	logAgentAction({
 		agent_id: event.agent_id,

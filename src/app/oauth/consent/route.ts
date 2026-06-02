@@ -15,10 +15,11 @@
 
 import { NextResponse } from "next/server";
 import { getClient, validateRedirectUri } from "@/lib/oauth/config";
-import { validateScopes } from "@/lib/oauth/scopes";
+import { parseScopes, validateScopes } from "@/lib/oauth/scopes";
 import { validateCodeChallenge } from "@/lib/oauth/pkce";
 import { createAuthorizationCode } from "@/lib/oauth/codes";
 import { saleorLogin } from "@/lib/oauth/saleor-auth";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
 	const formData = await request.formData();
@@ -59,8 +60,31 @@ export async function POST(request: Request) {
 		return errorResponse("Unknown client");
 	}
 
+	// Narrow the requested scope to what THIS client is allowed (CWE-863). The
+	// granted (intersected) scope is what gets bound to the code/token.
+	const grantedScope = parseScopes(scope)
+		.filter((s) => client.allowed_scopes.includes(s))
+		.join(" ");
+	if (!grantedScope) {
+		return errorResponse("Requested scope is not allowed for this client");
+	}
+
 	if (!validateRedirectUri(client, redirectUri)) {
 		return errorResponse("Invalid redirect_uri");
+	}
+
+	// ── Brute-force / credential-stuffing protection (CWE-307) ──
+	const ip = clientIp(request);
+	const [ipLimit, emailLimit] = await Promise.all([
+		rateLimit(`login:ip:${ip}`, 20, 600), // 20 attempts / 10 min per IP
+		rateLimit(`login:email:${email.toLowerCase()}`, 8, 900), // 8 / 15 min per account
+	]);
+	if (!ipLimit.allowed || !emailLimit.allowed) {
+		const retry = Math.max(ipLimit.retryAfterSeconds, emailLimit.retryAfterSeconds);
+		return new NextResponse("Too many login attempts. Please try again later.", {
+			status: 429,
+			headers: { "Retry-After": String(retry) },
+		});
 	}
 
 	// ── Authenticate with Saleor ──
@@ -88,10 +112,10 @@ export async function POST(request: Request) {
 
 	const { data } = loginResult;
 
-	const code = createAuthorizationCode({
+	const code = await createAuthorizationCode({
 		clientId,
 		redirectUri,
-		scope,
+		scope: grantedScope,
 		codeChallenge,
 		codeChallengeMethod: "S256",
 		saleorAccessToken: data.accessToken,
@@ -100,7 +124,7 @@ export async function POST(request: Request) {
 		userEmail: data.user.email,
 	});
 
-	console.log(`[OAuth] Authorization granted: client=${clientId} user=${data.user.id} scope=${scope}`);
+	console.log(`[OAuth] Authorization granted: client=${clientId} user=${data.user.id} scope=${grantedScope}`);
 
 	// ── Redirect to client with authorization code ──
 

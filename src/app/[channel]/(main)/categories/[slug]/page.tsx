@@ -6,7 +6,7 @@ import { ProductListByCategoryDocument } from "@/gql/graphql";
 import { executePublicGraphQL } from "@/lib/graphql";
 import { getPaginatedListVariables } from "@/lib/utils";
 import { parseEditorJSToText } from "@/lib/editorjs";
-import { buildBreadcrumbListJsonLd } from "@/lib/seo";
+import { buildBreadcrumbListJsonLd, JsonLdScript } from "@/lib/seo";
 import { CategoryHero, transformToProductCard } from "@/ui/components/plp";
 import { buildSortVariables, buildFilterVariables } from "@/ui/components/plp/filter-utils";
 import { CategoryPageClient } from "./client";
@@ -92,12 +92,7 @@ async function CategoryContent({
 
 	return (
 		<>
-			{breadcrumbJsonLd && (
-				<script
-					type="application/ld+json"
-					dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
-				/>
-			)}
+			<JsonLdScript data={breadcrumbJsonLd} />
 			<CategoryHero
 				title={category.name}
 				description={plainDescription}

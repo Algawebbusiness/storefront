@@ -8,7 +8,7 @@
  * Authorization: Bearer <access_token>
  */
 
-import { verifyJwt } from "@/lib/oauth/tokens";
+import { verifyJwt, getSaleorAccessToken } from "@/lib/oauth/tokens";
 import { hasScope } from "@/lib/oauth/scopes";
 import { saleorUserInfo } from "@/lib/oauth/saleor-auth";
 
@@ -39,8 +39,9 @@ export async function GET(request: Request) {
 		);
 	}
 
-	// Fetch user from Saleor
-	const saleorToken = payload.saleor_token;
+	// Fetch user from Saleor — the access token lives server-side, keyed by the
+	// JWT's jti (CWE-522: it is not embedded in the token itself).
+	const saleorToken = await getSaleorAccessToken(payload.jti);
 	if (!saleorToken) {
 		return Response.json(
 			{ error: "server_error", error_description: "Unable to fetch user profile" },

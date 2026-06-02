@@ -33,6 +33,7 @@ import {
 	type CheckoutShippingAddressUpdateData,
 	type SaleorCheckout,
 } from "@/lib/protocols/shared/checkout-queries";
+import { ownsCheckout } from "@/lib/protocols/shared/ownership";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
 import { withUcpRoute } from "@/lib/protocols/shared/route-handler";
 import type { ProtocolAddress } from "@/lib/protocols/shared/types";
@@ -62,13 +63,11 @@ export const GET = withUcpRoute<CheckoutParams>(
 		const result = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
 
 		if (!result.ok) {
-			return signedJsonResponse(
-				{ error: { code: "server_error", message: result.error } },
-				{ status: 500 },
-			);
+			return signedJsonResponse({ error: { code: "server_error", message: result.error } }, { status: 500 });
 		}
 
-		if (!result.data.checkout) {
+		if (!result.data.checkout || !ownsCheckout(result.data.checkout, auth)) {
+			// 404 (not 403) so a non-owner can't confirm the checkout exists (CWE-639).
 			return signedJsonResponse(
 				{ error: { code: "not_found", message: "Checkout session not found" } },
 				{ status: 404 },
@@ -109,7 +108,7 @@ export const PATCH = withUcpRoute<CheckoutParams>(
 				{ status: 500 },
 			);
 		}
-		if (!fetchResult.data.checkout) {
+		if (!fetchResult.data.checkout || !ownsCheckout(fetchResult.data.checkout, auth)) {
 			return signedJsonResponse(
 				{ error: { code: "not_found", message: "Checkout session not found" } },
 				{ status: 404 },
@@ -185,7 +184,9 @@ export const PATCH = withUcpRoute<CheckoutParams>(
 					{
 						error: {
 							code: "bad_request",
-							message: billingResult.data.checkoutBillingAddressUpdate.errors.map((e) => e.message).join("; "),
+							message: billingResult.data.checkoutBillingAddressUpdate.errors
+								.map((e) => e.message)
+								.join("; "),
 						},
 					},
 					{ status: 400 },
@@ -205,7 +206,9 @@ export const PATCH = withUcpRoute<CheckoutParams>(
 					{
 						error: {
 							code: "bad_request",
-							message: deliveryResult.data.checkoutDeliveryMethodUpdate.errors.map((e) => e.message).join("; "),
+							message: deliveryResult.data.checkoutDeliveryMethodUpdate.errors
+								.map((e) => e.message)
+								.join("; "),
 						},
 					},
 					{ status: 400 },
@@ -214,10 +217,13 @@ export const PATCH = withUcpRoute<CheckoutParams>(
 		}
 
 		if (body.remove_promo_code) {
-			const removeResult = await saleorQuery<CheckoutRemovePromoCodeData>(CHECKOUT_REMOVE_PROMO_CODE_MUTATION, {
-				checkoutId: id,
-				promoCode: body.remove_promo_code,
-			});
+			const removeResult = await saleorQuery<CheckoutRemovePromoCodeData>(
+				CHECKOUT_REMOVE_PROMO_CODE_MUTATION,
+				{
+					checkoutId: id,
+					promoCode: body.remove_promo_code,
+				},
+			);
 			if (removeResult.ok && removeResult.data.checkoutRemovePromoCode.checkout) {
 				checkout = removeResult.data.checkoutRemovePromoCode.checkout;
 			}

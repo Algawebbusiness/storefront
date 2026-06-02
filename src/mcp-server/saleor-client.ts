@@ -15,6 +15,14 @@ export function getDefaultChannel(): string {
 export async function saleorQuery<T = unknown>(
 	query: string,
 	variables: Record<string, unknown> = {},
+	opts: {
+		/**
+		 * When set, sent as `Authorization: Bearer <authToken>` so Saleor
+		 * authorizes the query as that principal (e.g. a customer's own token).
+		 * Omit for anonymous/public reads. Used by ownership-scoped routes.
+		 */
+		authToken?: string;
+	} = {},
 ): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
 	if (!SALEOR_API_URL) {
 		return { ok: false, error: "NEXT_PUBLIC_SALEOR_API_URL is not configured" };
@@ -23,7 +31,10 @@ export async function saleorQuery<T = unknown>(
 	try {
 		const res = await fetch(SALEOR_API_URL, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			headers: {
+				"Content-Type": "application/json",
+				...(opts.authToken ? { Authorization: `Bearer ${opts.authToken}` } : {}),
+			},
 			body: JSON.stringify({ query, variables }),
 		});
 
@@ -43,6 +54,9 @@ export async function saleorQuery<T = unknown>(
 
 		return { ok: true, data: json.data };
 	} catch (err) {
-		return { ok: false, error: `Failed to fetch: ${err instanceof Error ? err.message : String(err)}` };
+		// Log details server-side; return a generic message so internal hostnames
+		// / network errors don't leak deployment topology to callers (CWE-209).
+		console.error("[saleor-client] request failed:", err);
+		return { ok: false, error: "Upstream request failed" };
 	}
 }

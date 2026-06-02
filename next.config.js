@@ -9,27 +9,33 @@ const config = {
 	// See: https://nextjs.org/docs/app/getting-started/cache-components
 	cacheComponents: true,
 
+	// SECURITY: don't advertise the framework/version (fingerprinting).
+	poweredByHeader: false,
+
 	// Optimize barrel file imports for better bundle size and cold start performance
 	// See: https://vercel.com/blog/how-we-optimized-package-imports-in-next-js
 	experimental: {
 		optimizePackageImports: ["lucide-react", "lodash-es"],
-		// Note: API rate limiting is handled by RequestQueue in src/lib/graphql.ts
-		// (max 3 concurrent requests + 200ms delay between requests)
+		// Note: Saleor request concurrency is bounded by RequestQueue in
+		// src/lib/graphql.ts (default 10 concurrent; no per-request delay unless
+		// SALEOR_MIN_REQUEST_DELAY_MS is set).
 	},
 	images: {
 		remotePatterns: [
 			{
 				// Saleor Cloud CDN
+				protocol: "https",
 				hostname: "*.saleor.cloud",
 			},
 			{
 				// Saleor Media (common pattern)
+				protocol: "https",
 				hostname: "*.media.saleor.cloud",
 			},
-			{
-				// Allow all hostnames in development (restrict in production)
-				hostname: "*",
-			},
+			// SECURITY: never allow arbitrary remote hosts in production — the
+			// Next image optimizer would become an open image proxy / SSRF vector
+			// (server-side fetch of any URL). The wildcard is dev-only.
+			...(process.env.NODE_ENV === "development" ? [{ hostname: "*" }] : []),
 		],
 	},
 	typedRoutes: false,
@@ -54,7 +60,31 @@ const config = {
 	// Cache headers for static assets and API routes
 	async headers() {
 		const isDev = process.env.NODE_ENV === "development";
+		// SECURITY: baseline hardening headers on every response.
+		// X-Frame-Options: DENY also covers OAuth consent/login (must never be
+		// framable -> clickjacking). A full Content-Security-Policy is deferred
+		// to Block 1 (needs a per-request nonce for the inline JSON-LD <script>
+		// blocks); see the remediation tracker in CLAUDE.md.
+		const securityHeaders = [
+			{ key: "X-Frame-Options", value: "DENY" },
+			{ key: "X-Content-Type-Options", value: "nosniff" },
+			{ key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+			{ key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+			// HSTS only in production (avoid pinning HTTPS during local dev).
+			...(isDev
+				? []
+				: [
+						{
+							key: "Strict-Transport-Security",
+							value: "max-age=63072000; includeSubDomains; preload",
+						},
+					]),
+		];
 		return [
+			{
+				source: "/(.*)",
+				headers: securityHeaders,
+			},
 			// In development, prevent aggressive caching of dynamic chunks
 			...(isDev
 				? [

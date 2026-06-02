@@ -59,7 +59,16 @@ describe("OAuth2 JWT tokens", () => {
 		// Tamper with the payload part
 		const parts = token.split(".");
 		const tamperedPayload = Buffer.from(
-			JSON.stringify({ sub: "hacker", email: "h@x.com", scope: "profile", client_id: "x", type: "access", jti: "abc", iat: 0, exp: 9999999999 }),
+			JSON.stringify({
+				sub: "hacker",
+				email: "h@x.com",
+				scope: "profile",
+				client_id: "x",
+				type: "access",
+				jti: "abc",
+				iat: 0,
+				exp: 9999999999,
+			}),
 		)
 			.toString("base64")
 			.replace(/\+/g, "-")
@@ -68,6 +77,19 @@ describe("OAuth2 JWT tokens", () => {
 		const tampered = `${parts[0]}.${tamperedPayload}.${parts[2]}`;
 
 		expect(verifyJwt(tampered)).toBeNull();
+	});
+
+	it("verifyJwt rejects a non-HS256 alg header (alg confusion)", async () => {
+		const { signJwt, verifyJwt } = await loadModule();
+		const token = signJwt(
+			{ sub: "u", email: "e@x.cz", scope: "profile", client_id: "c", type: "access" },
+			3600,
+		);
+		const parts = token.split(".");
+		const b64url = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+		// Swap header to alg:"none" — must be rejected before signature checks.
+		const noneHeader = `${b64url({ alg: "none", typ: "JWT" })}.${parts[1]}.${parts[2]}`;
+		expect(verifyJwt(noneHeader)).toBeNull();
 	});
 
 	it("verifyJwt returns null for expired tokens", async () => {
@@ -98,7 +120,7 @@ describe("OAuth2 JWT tokens", () => {
 	it("createTokenPair returns access + refresh tokens with correct types", async () => {
 		const { createTokenPair, verifyJwt } = await loadModule();
 
-		const result = createTokenPair({
+		const result = await createTokenPair({
 			userId: "user-456",
 			email: "user@shop.com",
 			scope: "profile checkout orders",
@@ -116,13 +138,31 @@ describe("OAuth2 JWT tokens", () => {
 		expect(accessPayload).not.toBeNull();
 		expect(accessPayload!.type).toBe("access");
 		expect(accessPayload!.sub).toBe("user-456");
-		expect(accessPayload!.saleor_token).toBe("saleor-access-token-xyz");
 
 		const refreshPayload = verifyJwt(result.refresh_token);
 		expect(refreshPayload).not.toBeNull();
 		expect(refreshPayload!.type).toBe("refresh");
 		expect(refreshPayload!.sub).toBe("user-456");
-		expect(refreshPayload!.saleor_refresh_token).toBe("saleor-refresh-token-xyz");
+
+		// SECURITY (CWE-522): Saleor tokens must NOT be embedded in the JWT.
+		expect((accessPayload as unknown as Record<string, unknown>).saleor_token).toBeUndefined();
+		expect((refreshPayload as unknown as Record<string, unknown>).saleor_refresh_token).toBeUndefined();
+	});
+
+	it("stores Saleor tokens server-side, retrievable by jti (not in the JWT)", async () => {
+		const { createTokenPair, verifyJwt, getSaleorAccessToken, getSaleorRefreshToken } = await loadModule();
+		const r = await createTokenPair({
+			userId: "u",
+			email: "e@x.cz",
+			scope: "profile",
+			clientId: "c",
+			saleorToken: "S_AT",
+			saleorRefreshToken: "S_RT",
+		});
+		const accessJti = verifyJwt(r.access_token)!.jti;
+		const refreshJti = verifyJwt(r.refresh_token)!.jti;
+		expect(await getSaleorAccessToken(accessJti)).toBe("S_AT");
+		expect(await getSaleorRefreshToken(refreshJti)).toBe("S_RT");
 	});
 
 	it("revokeRefreshToken + isRefreshTokenRevoked works", async () => {
@@ -130,10 +170,10 @@ describe("OAuth2 JWT tokens", () => {
 
 		const jti = "test-jti-abc123";
 
-		expect(isRefreshTokenRevoked(jti)).toBe(false);
+		expect(await isRefreshTokenRevoked(jti)).toBe(false);
 
-		revokeRefreshToken(jti);
+		await revokeRefreshToken(jti);
 
-		expect(isRefreshTokenRevoked(jti)).toBe(true);
+		expect(await isRefreshTokenRevoked(jti)).toBe(true);
 	});
 });

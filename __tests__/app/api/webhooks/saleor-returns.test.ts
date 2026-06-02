@@ -5,6 +5,7 @@
  * record as `refunded`. Other events leave it alone.
  */
 
+import { createHmac } from "crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as saleorWebhook } from "@/app/api/webhooks/saleor/route";
 import {
@@ -48,11 +49,15 @@ function makeOrder(): SaleorOrder {
 	};
 }
 
+const TEST_WEBHOOK_SECRET = "test-webhook-secret";
+
 function makeWebhookRequest(event: string, orderId: string): Request {
+	const body = JSON.stringify({ event, order: { id: orderId, number: "1001" } });
+	const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(body).digest("hex");
 	return new Request("https://store.example/api/webhooks/saleor", {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ event, order: { id: orderId, number: "1001" } }),
+		headers: { "Content-Type": "application/json", "Saleor-Signature": signature },
+		body,
 	});
 }
 
@@ -61,7 +66,7 @@ describe("Saleor webhook — ORDER_REFUNDED", () => {
 		_resetReturnsStore();
 		vi.spyOn(console, "log").mockImplementation(() => {});
 		vi.spyOn(console, "warn").mockImplementation(() => {});
-		vi.stubEnv("SALEOR_WEBHOOK_SECRET", "");
+		vi.stubEnv("SALEOR_WEBHOOK_SECRET", TEST_WEBHOOK_SECRET);
 	});
 
 	afterEach(() => {

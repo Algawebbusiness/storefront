@@ -77,6 +77,9 @@ describe("POST /api/ucp/rest/carts (integration)", () => {
 			ok: true,
 			data: { checkoutCreate: { checkout: fakeCheckout(), errors: [] } },
 		});
+		// Agent-binding metadata write + refetch (IDOR defense).
+		mockSaleorQuery.mockResolvedValueOnce({ ok: true, data: { updateMetadata: { errors: [] } } });
+		mockSaleorQuery.mockResolvedValueOnce({ ok: true, data: { checkout: fakeCheckout() } });
 
 		const res = await createCart(
 			new Request("https://store.example/api/ucp/rest/carts", {
