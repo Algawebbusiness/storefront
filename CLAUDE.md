@@ -1227,20 +1227,21 @@ pnpm run build            # Produkční build
 
 ### ⏳ Progress (remediation branch `security-hardening`, pushed to GitHub origin)
 
-| Block                | Scope                                                                                                | Status                                                                                                                  |
-| -------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| 0                    | Config hardening (image proxy, headers, webhook fail-close, CI gate, cookie)                         | ✅ done                                                                                                                 |
-| 1                    | Stored XSS — escape JSON-LD (8 call sites)                                                           | ✅ done (strict CSP deferred — `cacheComponents` conflict)                                                              |
-| 7                    | SSRF guard on `webhook_url` (+18 tests)                                                              | ✅ done (DNS-rebinding residual)                                                                                        |
-| 15                   | Low/Info hardening batch                                                                             | ✅ done (3 items deferred)                                                                                              |
-| 3a                   | **Order IDOR** — ownership on order read + return/refund                                             | ✅ done                                                                                                                 |
-| 3b                   | Cart/checkout agent-binding + ACP/approvals ownership                                                | ✅ done (UCP+ACP cart/checkout binding, ACP order, approvals; only lines/loyalty mutation routes remain — low severity) |
-| 2                    | Auth fail-closed defaults (`validateApiKey`, `AGENT_API_KEYS`)                                       | ✅ done (prod fail-closed; public `/mcp` tool split deferred to 3b)                                                     |
-| 4                    | ACP → guard chain + delete deprecated auth                                                           | ✅ done (all ACP routes on withAcpRoute; validateAgentApiKey/validateOAuthToken deleted)                                |
-| 9                    | Durable store (Upstash Redis via REST, swappable) — INFRA                                            | ✅ code done (KvStore + in-memory + Upstash; codes/tokens/limits migrated). Operator step: provision Upstash at deploy  |
-| 5,6,8,10,11,12,13,14 | signing replay, JWT token leak, idempotency, rate-limit, scope, JWT correctness, perf, quality/tests | ⏳ TODO                                                                                                                 |
+| Block                     | Scope                                                                                        | Status                                                                                                                  |
+| ------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 0                         | Config hardening (image proxy, headers, webhook fail-close, CI gate, cookie)                 | ✅ done                                                                                                                 |
+| 1                         | Stored XSS — escape JSON-LD (8 call sites)                                                   | ✅ done (strict CSP deferred — `cacheComponents` conflict)                                                              |
+| 7                         | SSRF guard on `webhook_url` (+18 tests)                                                      | ✅ done (DNS-rebinding residual)                                                                                        |
+| 15                        | Low/Info hardening batch                                                                     | ✅ done (3 items deferred)                                                                                              |
+| 3a                        | **Order IDOR** — ownership on order read + return/refund                                     | ✅ done                                                                                                                 |
+| 3b                        | Cart/checkout agent-binding + ACP/approvals ownership                                        | ✅ done (UCP+ACP cart/checkout binding, ACP order, approvals; only lines/loyalty mutation routes remain — low severity) |
+| 2                         | Auth fail-closed defaults (`validateApiKey`, `AGENT_API_KEYS`)                               | ✅ done (prod fail-closed; public `/mcp` tool split deferred to 3b)                                                     |
+| 4                         | ACP → guard chain + delete deprecated auth                                                   | ✅ done (all ACP routes on withAcpRoute; validateAgentApiKey/validateOAuthToken deleted)                                |
+| 9                         | Durable store (Upstash Redis via REST, swappable) — INFRA                                    | ✅ code done (KvStore + in-memory + Upstash; codes/tokens/limits migrated). Operator step: provision Upstash at deploy  |
+| 6                         | Saleor tokens out of JWT (server-side keyed by jti) + refresh re-auth                        | ✅ done (incl. Block 12 refresh-rotation core)                                                                          |
+| 5,8,10,11,13,14 + 12-rest | signing replay, idempotency, rate-limit, scope, perf, quality/tests, verifyJwt base64url/alg | ⏳ TODO                                                                                                                 |
 
-**Closed so far:** 5 HIGH (SSRF webhook_url, stored XSS, open image proxy, webhook fail-open, order IDOR) + many Med/Low/Info. Full test suite green throughout (530/530); every block committed separately.
+**Closed so far:** 6 HIGH (SSRF webhook_url, stored XSS, open image proxy, webhook fail-open, order IDOR, Saleor-token-in-JWT) + ACP completion bypass + auth fail-closed + cart/checkout IDOR + many Med/Low/Info. Full test suite green throughout (now 558/558); every block committed separately.
 
 **Manual follow-ups (not code):** (1) mark `CI / verify` as a required status check in GitHub branch protection; (2) decide CSP strategy vs `cacheComponents`; (3) GitLab mirror push URL on `origin` has a stale/expired PAT in `.git/config` (push to GitHub works; GitLab leg fails) — rotate or remove it.
 
@@ -1311,7 +1312,9 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 6 — Saleor tokens out of JWT · size: **M** · (server store ties to Block 9)
 
-- [ ] [HIGH] Stop embedding live Saleor access+refresh tokens as plaintext JWT claims. Store server-side keyed by `jti`/`sub` (Redis/DB) or encrypt (JWE). At minimum drop `saleor_token` from access JWT and keep `saleor_refresh_token` out of the 30-day refresh JWT — `src/lib/oauth/tokens.ts:48-71,125-141`; `token/route.ts:106-127`. CWE-522.
+- [x] [HIGH] Saleor tokens removed from JWT claims (`saleor_token`/`saleor_refresh_token` deleted from `JwtPayload`). `createTokenPair` now stores them server-side in the durable store keyed by the access/refresh `jti` (`oauth:saleor_at:` / `oauth:saleor_rt:`, with matching TTLs). `getSaleorAccessToken`/`getSaleorRefreshToken`/`deleteSaleorRefreshToken` added. `userinfo` looks up the access token by jti; `verifyOAuthBearer` no longer carries it (userContext.saleorToken = ""). CWE-522.
+  - **Bonus (Block 12 core):** refresh grant now calls Saleor `tokenRefresh` (new `saleorTokenRefresh` in `saleor-auth.ts`) to get a fresh Saleor access token, fails the grant (re-auth) if Saleor rejects it, and rotates the OAuth refresh JTI + its Saleor binding. +2 tests; 558/558; tsc 0.
+  - **Migration note:** OAuth refresh tokens issued before this change (Saleor token in the JWT, no server-side binding) will fail refresh → clients re-authenticate. Acceptable for a security fix.
 
 ### BLOCK 7 — SSRF on agent webhook_url · size: **M**
 
@@ -1349,8 +1352,8 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 12 — JWT / refresh correctness · size: **M**
 
-- [ ] [LOW] On refresh, call Saleor `tokenRefresh`, fail if rejected, rotate stored tokens (currently re-stamps stale tokens up to 30d) — `oauth/token/route.ts:160-173`. CWE-613.
-- [ ] [MEDIUM/quality] `verifyJwt` uses base64 not base64url for signature decode (intermittent valid-token rejection); also assert `alg==='HS256'` — `tokens.ts:74-104`.
+- [x] [LOW] On refresh, call Saleor `tokenRefresh`, fail if rejected, rotate stored tokens — DONE in Block 6 (`saleorTokenRefresh` + refresh-grant rewrite). CWE-613.
+- [ ] [MEDIUM/quality] `verifyJwt` uses base64 not base64url for signature decode (intermittent valid-token rejection); also assert `alg==='HS256'` — `tokens.ts` (verifyJwt). Only remaining Block 12 item.
 
 ### BLOCK 13 — Performance · size: **M**
 

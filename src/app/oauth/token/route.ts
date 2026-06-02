@@ -16,7 +16,15 @@
 import { getAgentForOauthClient, getClient, verifyClientSecret } from "@/lib/oauth/config";
 import { consumeAuthorizationCode } from "@/lib/oauth/codes";
 import { verifyPkce } from "@/lib/oauth/pkce";
-import { createTokenPair, verifyJwt, revokeRefreshToken, isRefreshTokenRevoked } from "@/lib/oauth/tokens";
+import { saleorTokenRefresh } from "@/lib/oauth/saleor-auth";
+import {
+	createTokenPair,
+	verifyJwt,
+	revokeRefreshToken,
+	isRefreshTokenRevoked,
+	getSaleorRefreshToken,
+	deleteSaleorRefreshToken,
+} from "@/lib/oauth/tokens";
 
 interface TokenRequest {
 	grant_type: string;
@@ -103,7 +111,7 @@ async function handleAuthorizationCodeGrant(body: TokenRequest, clientId: string
 	// ── Issue tokens ──
 
 	const agentId = getAgentForOauthClient(clientId) ?? undefined;
-	const tokens = createTokenPair({
+	const tokens = await createTokenPair({
 		userId: stored.userId,
 		email: stored.userEmail,
 		scope: stored.scope,
@@ -153,22 +161,40 @@ async function handleRefreshTokenGrant(body: TokenRequest, clientId: string) {
 		return errorResponse("invalid_grant", "Refresh token has been revoked", 400);
 	}
 
-	// ── Revoke old token and issue new pair ──
+	// ── Look up the server-side Saleor refresh token bound to this jti ──
+	// (CWE-522: it is no longer carried inside the JWT.) Missing ⇒ the binding
+	// expired or the token predates this scheme ⇒ force re-auth.
+	const saleorRefreshToken = await getSaleorRefreshToken(payload.jti);
+	if (!saleorRefreshToken) {
+		return errorResponse(
+			"invalid_grant",
+			"Refresh token is no longer valid; re-authentication required",
+			400,
+		);
+	}
 
+	// Exchange the Saleor refresh token for a fresh Saleor access token. If
+	// Saleor rejects it (expired/revoked), fail the grant — re-auth required.
+	const freshSaleorAccess = await saleorTokenRefresh(saleorRefreshToken);
+	if (!freshSaleorAccess) {
+		await revokeRefreshToken(payload.jti);
+		await deleteSaleorRefreshToken(payload.jti);
+		return errorResponse("invalid_grant", "Saleor session expired; re-authentication required", 400);
+	}
+
+	// ── Revoke old token (+ its Saleor binding) and issue a new pair ──
 	await revokeRefreshToken(payload.jti);
+	await deleteSaleorRefreshToken(payload.jti);
 
-	// Re-use the Saleor refresh token to get new Saleor tokens
-	// For simplicity, we create new OAuth tokens with the same Saleor tokens
-	// In production, you'd call Saleor tokenRefresh here
 	// Preserve agent_id binding across refresh — fall back to current client mapping if absent.
 	const agentId = payload.agent_id ?? getAgentForOauthClient(clientId) ?? undefined;
-	const tokens = createTokenPair({
+	const tokens = await createTokenPair({
 		userId: payload.sub,
 		email: payload.email,
 		scope: payload.scope,
 		clientId,
-		saleorToken: payload.saleor_token || "",
-		saleorRefreshToken: payload.saleor_refresh_token || "",
+		saleorToken: freshSaleorAccess,
+		saleorRefreshToken,
 		agentId,
 	});
 

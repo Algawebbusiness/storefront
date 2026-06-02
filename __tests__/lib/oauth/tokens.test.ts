@@ -107,7 +107,7 @@ describe("OAuth2 JWT tokens", () => {
 	it("createTokenPair returns access + refresh tokens with correct types", async () => {
 		const { createTokenPair, verifyJwt } = await loadModule();
 
-		const result = createTokenPair({
+		const result = await createTokenPair({
 			userId: "user-456",
 			email: "user@shop.com",
 			scope: "profile checkout orders",
@@ -125,13 +125,31 @@ describe("OAuth2 JWT tokens", () => {
 		expect(accessPayload).not.toBeNull();
 		expect(accessPayload!.type).toBe("access");
 		expect(accessPayload!.sub).toBe("user-456");
-		expect(accessPayload!.saleor_token).toBe("saleor-access-token-xyz");
 
 		const refreshPayload = verifyJwt(result.refresh_token);
 		expect(refreshPayload).not.toBeNull();
 		expect(refreshPayload!.type).toBe("refresh");
 		expect(refreshPayload!.sub).toBe("user-456");
-		expect(refreshPayload!.saleor_refresh_token).toBe("saleor-refresh-token-xyz");
+
+		// SECURITY (CWE-522): Saleor tokens must NOT be embedded in the JWT.
+		expect((accessPayload as unknown as Record<string, unknown>).saleor_token).toBeUndefined();
+		expect((refreshPayload as unknown as Record<string, unknown>).saleor_refresh_token).toBeUndefined();
+	});
+
+	it("stores Saleor tokens server-side, retrievable by jti (not in the JWT)", async () => {
+		const { createTokenPair, verifyJwt, getSaleorAccessToken, getSaleorRefreshToken } = await loadModule();
+		const r = await createTokenPair({
+			userId: "u",
+			email: "e@x.cz",
+			scope: "profile",
+			clientId: "c",
+			saleorToken: "S_AT",
+			saleorRefreshToken: "S_RT",
+		});
+		const accessJti = verifyJwt(r.access_token)!.jti;
+		const refreshJti = verifyJwt(r.refresh_token)!.jti;
+		expect(await getSaleorAccessToken(accessJti)).toBe("S_AT");
+		expect(await getSaleorRefreshToken(refreshJti)).toBe("S_RT");
 	});
 
 	it("revokeRefreshToken + isRefreshTokenRevoked works", async () => {

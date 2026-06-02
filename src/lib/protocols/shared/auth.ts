@@ -218,7 +218,9 @@ async function verifyOAuthBearer(
 			userId: payload.sub,
 			email: payload.email,
 			scope: payload.scope,
-			saleorToken: payload.saleor_token || "",
+			// Saleor access token is no longer embedded in the JWT (CWE-522);
+			// ownership checks use the verified email, not this token.
+			saleorToken: "",
 		},
 	};
 }
