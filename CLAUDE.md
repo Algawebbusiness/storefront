@@ -1241,7 +1241,7 @@ pnpm run build            # Produkční build
 | 6                         | Saleor tokens out of JWT (server-side keyed by jti) + refresh re-auth                        | ✅ done (incl. Block 12 refresh-rotation core)                                                                          |
 | 5,8,10,11,13,14 + 12-rest | signing replay, idempotency, rate-limit, scope, perf, quality/tests, verifyJwt base64url/alg | ⏳ TODO                                                                                                                 |
 
-**Closed so far:** 6 HIGH (SSRF webhook_url, stored XSS, open image proxy, webhook fail-open, order IDOR, Saleor-token-in-JWT) + ACP completion bypass + auth fail-closed + cart/checkout IDOR + many Med/Low/Info. Full test suite green throughout (now 558/558); every block committed separately.
+**Closed so far:** 8 HIGH (SSRF webhook_url, stored XSS, open image proxy, webhook fail-open, order IDOR, Saleor-token-in-JWT) + ACP completion bypass + auth fail-closed + cart/checkout IDOR + many Med/Low/Info. Full test suite green throughout (now 558/558); every block committed separately.
 
 **Manual follow-ups (not code):** (1) mark `CI / verify` as a required status check in GitHub branch protection; (2) decide CSP strategy vs `cacheComponents`; (3) GitLab mirror push URL on `origin` has a stale/expired PAT in `.git/config` (push to GitHub works; GitLab leg fails) — rotate or remove it.
 
@@ -1324,8 +1324,10 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 8 — Idempotency & atomicity on money paths · size: **L** · (durable store ties to Block 9)
 
-- [ ] [HIGH] Checkout completion: require `Idempotency-Key` in durable storage before charging; short-circuit duplicates; reuse fetched checkout — `checkout-sessions/[id]/complete/route.ts:69-151`, `limits.ts:45-96`. CWE-367.
-- [ ] [HIGH] Return/refund: track refund state in Saleor (not in-memory Map), make create-return atomic (unique constraint), idempotency keys — `return-mapper.ts:142-148,269-271`. CWE-367.
+- [x] [HIGH] Checkout completion idempotency. New `src/lib/protocols/shared/idempotency.ts` (`acquireLock`/`releaseLock` over `store.setnx`). UCP + ACP complete routes take a per-checkout lock (`checkout-complete:<id>`) AFTER the approval gate, then charge+complete inside try/finally: lock released on failure (retryable), KEPT on success → concurrent POSTs / retries get 409 instead of a double charge. CWE-367.
+- [x] [HIGH] Return/refund concurrency: UCP return route holds a per-order lock (`order-return:<id>`) across eligibility + `triggerSaleorRefund` (try/finally) → concurrent requests can't double-refund (409). CWE-367.
+  - **Remaining (cross-instance durability):** `return-mapper` still keeps return records in an in-memory `Map`, so a SEQUENTIAL repeat on a different instance / after restart isn't caught by the eligibility check (the lock only covers concurrency). Proper fix = migrate `returnsStore` to the durable `KvStore` (a Block 9-style follow-up) or check existing Saleor refunds before triggering. Documented; lower-frequency than the concurrent race now closed.
+- [x] +2 idempotency unit tests; 564/564; tsc 0.
 
 ### BLOCK 9 — Durable state backing · size: **L** · INFRA — unblocks 5/6/8/10
 

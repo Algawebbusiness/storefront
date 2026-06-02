@@ -23,6 +23,7 @@ import {
 	type CheckoutByIdData,
 	type CheckoutCompleteData,
 } from "@/lib/protocols/shared/checkout-queries";
+import { acquireLock, releaseLock } from "@/lib/protocols/shared/idempotency";
 import { recordSpend } from "@/lib/protocols/shared/limits";
 import { ownsCheckout } from "@/lib/protocols/shared/ownership";
 import { processStripePayment, type StripePaymentMethod } from "@/lib/protocols/shared/payment";
@@ -136,50 +137,70 @@ export const POST = withUcpRoute<CheckoutParams>(
 			);
 		}
 
-		// Process payment
-		const paymentResult = await processStripePayment(id, body.payment.token, paymentMethod);
-		if (!paymentResult.ok) {
+		// SECURITY (CWE-367): take a per-checkout lock so concurrent POSTs / retries
+		// can't double-charge. Acquired AFTER the approval gate (a 202 must not burn
+		// the lock). Released on failure (retryable); kept on success (rejects dupes).
+		if (!(await acquireLock(`checkout-complete:${id}`))) {
 			return signedJsonResponse(
-				{ error: { code: "payment_failed", message: paymentResult.error ?? "Payment processing failed" } },
-				{ status: 400 },
+				{ error: { code: "conflict", message: "A completion for this checkout is already in progress" } },
+				{ status: 409 },
 			);
 		}
 
-		// Complete the checkout
-		const completeResult = await saleorQuery<CheckoutCompleteData>(CHECKOUT_COMPLETE_MUTATION, {
-			checkoutId: id,
-		});
+		let completed = false;
+		try {
+			// Process payment
+			const paymentResult = await processStripePayment(id, body.payment.token, paymentMethod);
+			if (!paymentResult.ok) {
+				return signedJsonResponse(
+					{ error: { code: "payment_failed", message: paymentResult.error ?? "Payment processing failed" } },
+					{ status: 400 },
+				);
+			}
 
-		if (!completeResult.ok) {
-			return signedJsonResponse(
-				{ error: { code: "server_error", message: completeResult.error } },
-				{ status: 500 },
-			);
+			// Complete the checkout
+			const completeResult = await saleorQuery<CheckoutCompleteData>(CHECKOUT_COMPLETE_MUTATION, {
+				checkoutId: id,
+			});
+
+			if (!completeResult.ok) {
+				return signedJsonResponse(
+					{ error: { code: "server_error", message: completeResult.error } },
+					{ status: 500 },
+				);
+			}
+
+			const completeData = completeResult.data.checkoutComplete;
+			if (completeData.errors.length > 0) {
+				return signedJsonResponse(
+					{
+						error: { code: "checkout_error", message: completeData.errors.map((e) => e.message).join("; ") },
+					},
+					{ status: 400 },
+				);
+			}
+
+			// Past the charge + completion → keep the lock so a duplicate submit 409s.
+			completed = true;
+
+			// Record committed spend so per-day/month caps reflect real spend.
+			await recordSpend(auth.agent.id, totalCents);
+
+			const ucpMeta = await buildUcpMeta(auth.profileUrl);
+
+			// Re-fetch checkout for final state (or return order info)
+			const finalFetch = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
+			const checkoutData = finalFetch.ok ? finalFetch.data.checkout : null;
+
+			return signedJsonResponse({
+				ucp: ucpMeta,
+				checkout_session: checkoutData
+					? { ...mapCheckoutToProtocol(checkoutData), status: "completed" as const }
+					: { id, status: "completed" as const },
+				order: completeData.order ? { id: completeData.order.id, number: completeData.order.number } : null,
+			});
+		} finally {
+			if (!completed) await releaseLock(`checkout-complete:${id}`);
 		}
-
-		const completeData = completeResult.data.checkoutComplete;
-		if (completeData.errors.length > 0) {
-			return signedJsonResponse(
-				{ error: { code: "checkout_error", message: completeData.errors.map((e) => e.message).join("; ") } },
-				{ status: 400 },
-			);
-		}
-
-		// Record committed spend so per-day/month caps reflect real spend.
-		await recordSpend(auth.agent.id, totalCents);
-
-		const ucpMeta = await buildUcpMeta(auth.profileUrl);
-
-		// Re-fetch checkout for final state (or return order info)
-		const finalFetch = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
-		const checkoutData = finalFetch.ok ? finalFetch.data.checkout : null;
-
-		return signedJsonResponse({
-			ucp: ucpMeta,
-			checkout_session: checkoutData
-				? { ...mapCheckoutToProtocol(checkoutData), status: "completed" as const }
-				: { id, status: "completed" as const },
-			order: completeData.order ? { id: completeData.order.id, number: completeData.order.number } : null,
-		});
 	},
 );

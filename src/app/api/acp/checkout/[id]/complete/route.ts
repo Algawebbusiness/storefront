@@ -15,6 +15,7 @@
 import { NextResponse } from "next/server";
 import { withAcpRoute } from "@/lib/protocols/acp/route-handler";
 import { buildApprovalUrl, createPendingApproval, requiresApproval } from "@/lib/protocols/shared/approvals";
+import { acquireLock, releaseLock } from "@/lib/protocols/shared/idempotency";
 import { recordSpend } from "@/lib/protocols/shared/limits";
 import { saleorQuery } from "@/mcp-server/saleor-client";
 import { processStripePayment } from "@/lib/protocols/shared/payment";
@@ -104,47 +105,65 @@ export const POST = withAcpRoute<CheckoutParams>(
 			);
 		}
 
-		// Process Stripe payment
-		const paymentResult = await processStripePayment(id, body.payment_token);
-		if (!paymentResult.ok) {
+		// SECURITY (CWE-367): per-checkout lock so concurrent completes / retries
+		// can't double-charge. Released on failure (retryable), kept on success.
+		if (!(await acquireLock(`checkout-complete:${id}`))) {
 			return NextResponse.json(
-				{ error: { code: "payment_failed", message: paymentResult.error ?? "Payment processing failed" } },
-				{ status: 400 },
+				{ error: { code: "conflict", message: "A completion for this checkout is already in progress" } },
+				{ status: 409 },
 			);
 		}
 
-		// Complete the checkout
-		const completeResult = await saleorQuery<CheckoutCompleteData>(CHECKOUT_COMPLETE_MUTATION, {
-			checkoutId: id,
-		});
+		let completed = false;
+		try {
+			// Process Stripe payment
+			const paymentResult = await processStripePayment(id, body.payment_token);
+			if (!paymentResult.ok) {
+				return NextResponse.json(
+					{ error: { code: "payment_failed", message: paymentResult.error ?? "Payment processing failed" } },
+					{ status: 400 },
+				);
+			}
 
-		if (!completeResult.ok) {
-			return NextResponse.json(
-				{ error: { code: "server_error", message: completeResult.error } },
-				{ status: 500 },
-			);
+			// Complete the checkout
+			const completeResult = await saleorQuery<CheckoutCompleteData>(CHECKOUT_COMPLETE_MUTATION, {
+				checkoutId: id,
+			});
+
+			if (!completeResult.ok) {
+				return NextResponse.json(
+					{ error: { code: "server_error", message: completeResult.error } },
+					{ status: 500 },
+				);
+			}
+
+			const completeData = completeResult.data.checkoutComplete;
+			if (completeData.errors.length > 0) {
+				return NextResponse.json(
+					{
+						error: { code: "checkout_error", message: completeData.errors.map((e) => e.message).join("; ") },
+					},
+					{ status: 400 },
+				);
+			}
+
+			completed = true;
+
+			// Record committed spend so per-day/month caps reflect real spend.
+			await recordSpend(auth.agent.id, totalCents);
+
+			// Re-fetch for final state
+			const finalFetch = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
+			const checkoutData = finalFetch.ok ? finalFetch.data.checkout : null;
+
+			return NextResponse.json({
+				checkout_session: checkoutData
+					? { ...mapCheckoutToProtocol(checkoutData), status: "completed" as const }
+					: { id, status: "completed" as const },
+				order: completeData.order ? { id: completeData.order.id, number: completeData.order.number } : null,
+			});
+		} finally {
+			if (!completed) await releaseLock(`checkout-complete:${id}`);
 		}
-
-		const completeData = completeResult.data.checkoutComplete;
-		if (completeData.errors.length > 0) {
-			return NextResponse.json(
-				{ error: { code: "checkout_error", message: completeData.errors.map((e) => e.message).join("; ") } },
-				{ status: 400 },
-			);
-		}
-
-		// Record committed spend so per-day/month caps reflect real spend.
-		await recordSpend(auth.agent.id, totalCents);
-
-		// Re-fetch for final state
-		const finalFetch = await saleorQuery<CheckoutByIdData>(CHECKOUT_BY_ID_QUERY, { id });
-		const checkoutData = finalFetch.ok ? finalFetch.data.checkout : null;
-
-		return NextResponse.json({
-			checkout_session: checkoutData
-				? { ...mapCheckoutToProtocol(checkoutData), status: "completed" as const }
-				: { id, status: "completed" as const },
-			order: completeData.order ? { id: completeData.order.id, number: completeData.order.number } : null,
-		});
 	},
 );

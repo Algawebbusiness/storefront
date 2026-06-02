@@ -22,6 +22,7 @@
  */
 
 import { ORDER_BY_ID_QUERY, type OrderByIdData } from "@/lib/protocols/shared/order-queries";
+import { acquireLock, releaseLock } from "@/lib/protocols/shared/idempotency";
 import { ownsOrder } from "@/lib/protocols/shared/ownership";
 import { signedJsonResponse } from "@/lib/protocols/shared/response";
 import { validateOutboundWebhookUrl } from "@/lib/protocols/shared/url-guard";
@@ -170,70 +171,83 @@ export const POST = withUcpRoute<OrderParams>(
 			);
 		}
 
-		const eligibility = checkReturnEligibility(order, lines, listReturnsForOrder(id));
-		if (!eligibility.ok) {
-			const status = eligibility.code === "unknown_line" ? 400 : 409;
+		if (!(await acquireLock(`order-return:${id}`))) {
 			return signedJsonResponse(
-				{ error: { code: eligibility.code, message: eligibility.message } },
-				{ status },
+				{ error: { code: "conflict", message: "A return for this order is already being processed" } },
+				{ status: 409 },
 			);
 		}
 
-		const input: CreateReturnInput = {
-			order_id: id,
-			agent_id: auth.agent.id,
-			user_id: auth.userContext.userId,
-			reason,
-			...(body.note ? { note: body.note } : {}),
-			...(lines ? { lines } : {}),
-			refund_method: refundMethod,
-			...(body.webhook_url ? { webhook_url: body.webhook_url } : {}),
-		};
-
-		let record = await createReturnRecord(input, order);
-
-		// C2: for full-order returns (no specific lines + original_payment) we
-		// trigger the Saleor orderRefund immediately. Partial / store-credit
-		// flows stay `pending` and the merchant completes them from Saleor
-		// admin until a later phase handles fulfillment-line mapping.
-		const isFullOrderRefund = (!lines || lines.length === 0) && refundMethod === "original_payment";
-		if (isFullOrderRefund) {
-			const refundResult = await triggerSaleorRefund({
-				orderId: order.id,
-				amountMajorUnits: order.total.gross.amount,
-			});
-			if (refundResult.ok) {
-				// Saleor accepted the refund; webhook (ORDER_REFUNDED) will move
-				// us to `refunded` once payment settles.
-				record = updateReturnStatus(record.id, "approved") ?? record;
-			} else if (refundResult.reason !== "unconfigured") {
-				// Real refund failure — surface as 502 so the agent can retry.
-				console.warn(`[returns] Saleor refund failed for ${record.id}: ${refundResult.reason}`);
+		// SECURITY (CWE-367): hold a per-order lock across eligibility + refund so
+		// concurrent requests can't double-refund the same order.
+		try {
+			const eligibility = checkReturnEligibility(order, lines, listReturnsForOrder(id));
+			if (!eligibility.ok) {
+				const status = eligibility.code === "unknown_line" ? 400 : 409;
 				return signedJsonResponse(
-					{
-						error: {
-							code: "refund_failed",
-							message: `Refund could not be initiated: ${refundResult.reason}`,
-						},
-						return_id: record.id,
-					},
-					{ status: 502 },
+					{ error: { code: eligibility.code, message: eligibility.message } },
+					{ status },
 				);
 			}
-			// `unconfigured` ⇒ keep `pending`; merchant finishes via Saleor admin.
-		}
 
-		const ucpMeta = await buildUcpMeta(auth.profileUrl);
-		return signedJsonResponse(
-			{
-				ucp: ucpMeta,
-				return_id: record.id,
-				status: record.status,
-				estimated_refund_cents: record.estimated_refund_cents,
-				currency: record.currency,
-			},
-			{ status: 200 },
-		);
+			const input: CreateReturnInput = {
+				order_id: id,
+				agent_id: auth.agent.id,
+				user_id: auth.userContext.userId,
+				reason,
+				...(body.note ? { note: body.note } : {}),
+				...(lines ? { lines } : {}),
+				refund_method: refundMethod,
+				...(body.webhook_url ? { webhook_url: body.webhook_url } : {}),
+			};
+
+			let record = await createReturnRecord(input, order);
+
+			// C2: for full-order returns (no specific lines + original_payment) we
+			// trigger the Saleor orderRefund immediately. Partial / store-credit
+			// flows stay `pending` and the merchant completes them from Saleor
+			// admin until a later phase handles fulfillment-line mapping.
+			const isFullOrderRefund = (!lines || lines.length === 0) && refundMethod === "original_payment";
+			if (isFullOrderRefund) {
+				const refundResult = await triggerSaleorRefund({
+					orderId: order.id,
+					amountMajorUnits: order.total.gross.amount,
+				});
+				if (refundResult.ok) {
+					// Saleor accepted the refund; webhook (ORDER_REFUNDED) will move
+					// us to `refunded` once payment settles.
+					record = updateReturnStatus(record.id, "approved") ?? record;
+				} else if (refundResult.reason !== "unconfigured") {
+					// Real refund failure — surface as 502 so the agent can retry.
+					console.warn(`[returns] Saleor refund failed for ${record.id}: ${refundResult.reason}`);
+					return signedJsonResponse(
+						{
+							error: {
+								code: "refund_failed",
+								message: `Refund could not be initiated: ${refundResult.reason}`,
+							},
+							return_id: record.id,
+						},
+						{ status: 502 },
+					);
+				}
+				// `unconfigured` ⇒ keep `pending`; merchant finishes via Saleor admin.
+			}
+
+			const ucpMeta = await buildUcpMeta(auth.profileUrl);
+			return signedJsonResponse(
+				{
+					ucp: ucpMeta,
+					return_id: record.id,
+					status: record.status,
+					estimated_refund_cents: record.estimated_refund_cents,
+					currency: record.currency,
+				},
+				{ status: 200 },
+			);
+		} finally {
+			await releaseLock(`order-return:${id}`);
+		}
 	},
 );
 
