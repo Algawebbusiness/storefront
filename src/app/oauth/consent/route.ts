@@ -15,7 +15,7 @@
 
 import { NextResponse } from "next/server";
 import { getClient, validateRedirectUri } from "@/lib/oauth/config";
-import { validateScopes } from "@/lib/oauth/scopes";
+import { parseScopes, validateScopes } from "@/lib/oauth/scopes";
 import { validateCodeChallenge } from "@/lib/oauth/pkce";
 import { createAuthorizationCode } from "@/lib/oauth/codes";
 import { saleorLogin } from "@/lib/oauth/saleor-auth";
@@ -58,6 +58,15 @@ export async function POST(request: Request) {
 	const client = getClient(clientId);
 	if (!client) {
 		return errorResponse("Unknown client");
+	}
+
+	// Narrow the requested scope to what THIS client is allowed (CWE-863). The
+	// granted (intersected) scope is what gets bound to the code/token.
+	const grantedScope = parseScopes(scope)
+		.filter((s) => client.allowed_scopes.includes(s))
+		.join(" ");
+	if (!grantedScope) {
+		return errorResponse("Requested scope is not allowed for this client");
 	}
 
 	if (!validateRedirectUri(client, redirectUri)) {
@@ -106,7 +115,7 @@ export async function POST(request: Request) {
 	const code = await createAuthorizationCode({
 		clientId,
 		redirectUri,
-		scope,
+		scope: grantedScope,
 		codeChallenge,
 		codeChallengeMethod: "S256",
 		saleorAccessToken: data.accessToken,
@@ -115,7 +124,7 @@ export async function POST(request: Request) {
 		userEmail: data.user.email,
 	});
 
-	console.log(`[OAuth] Authorization granted: client=${clientId} user=${data.user.id} scope=${scope}`);
+	console.log(`[OAuth] Authorization granted: client=${clientId} user=${data.user.id} scope=${grantedScope}`);
 
 	// ── Redirect to client with authorization code ──
 

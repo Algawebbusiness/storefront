@@ -1383,8 +1383,9 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 11 — Scope enforcement · size: **M**
 
-- [ ] [MEDIUM] Unmapped OAuth bearer defaults to full synthetic scope; `hasScope` checks `agent.scope` not consented `payload.scope`. Intersect consented + mapped scope — `auth.ts:250-261`. CWE-269.
-- [ ] [LOW] Per-client scope allow-list (all clients get every scope today); implement or remove dead `allowed_scopes` — `oauth/config.ts:53-59`, consent + token routes. CWE-863.
+- [x] [MEDIUM] OAuth bearer scope now derived from CONSENT, not full synthetic. New `mapOAuthToAgentScopes` (scopes.ts) translates OAuth scopes (profile/checkout/orders/addresses) → protocol `AgentScope`s; `verifyOAuthBearer` sets `agent.scope = consented` (unmapped client) or `intersection(registryAgent.scope, consented)` (mapped). `hasScope` then enforces the real consented set. +4 tests. CWE-269.
+- [x] [LOW] Per-client `allowed_scopes` now enforced: `consent` intersects the requested scope with `client.allowed_scopes` and binds the granted (intersected) scope to the code/token (empty → error). Wires the previously-dead field. CWE-863.
+- [x] **Block 11 COMPLETE.** 568/568; tsc 0.
 
 ### BLOCK 12 — JWT / refresh correctness · size: **M**
 

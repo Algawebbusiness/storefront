@@ -20,6 +20,7 @@ import type { AgentIdentity } from "./agent-registry-types";
 import { parseSignatureHeader } from "./response";
 import { buildSigningString, sha256Hex, verifyDetached } from "./signing";
 import { verifyJwt, type JwtPayload } from "@/lib/oauth/tokens";
+import { mapOAuthToAgentScopes } from "@/lib/oauth/scopes";
 import { getStore } from "@/lib/store";
 
 /** Max clock skew (seconds) for a signed request's UCP-Timestamp. */
@@ -231,19 +232,28 @@ async function verifyOAuthBearer(
 
 	const profileUrl = extractProfileUrl(request.headers.get("UCP-Agent"));
 
+	// SECURITY (CWE-269): the effective protocol scope is what the customer
+	// CONSENTED to (mapped from the OAuth scopes), never the full synthetic set.
+	const consentedScopes = mapOAuthToAgentScopes(payload.scope || "");
+
 	// Phase B7: if the token carries an agent_id claim, resolve the real
-	// AgentIdentity from the registry. Falls back to SYNTHETIC_LEGACY_AGENT
-	// stamped with the client_id when no mapping exists.
+	// AgentIdentity from the registry; the granted scope is then the
+	// intersection of the registered agent's scope and the consented scope.
+	// Without a mapping, the agent gets ONLY the consented scope.
 	let agent: AgentIdentity = {
 		...SYNTHETIC_LEGACY_AGENT,
 		id: payload.client_id ?? "oauth-bearer",
+		scope: consentedScopes,
 	};
 	let isLegacy = true;
 	if (payload.agent_id) {
 		const lookup = await lookupAgent(payload.agent_id);
 		if (lookup.found) {
-			agent = lookup.agent;
 			isLegacy = false;
+			agent = {
+				...lookup.agent,
+				scope: lookup.agent.scope.filter((s) => consentedScopes.includes(s)),
+			};
 		}
 	}
 
