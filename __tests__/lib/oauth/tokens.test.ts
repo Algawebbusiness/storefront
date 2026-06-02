@@ -79,6 +79,19 @@ describe("OAuth2 JWT tokens", () => {
 		expect(verifyJwt(tampered)).toBeNull();
 	});
 
+	it("verifyJwt rejects a non-HS256 alg header (alg confusion)", async () => {
+		const { signJwt, verifyJwt } = await loadModule();
+		const token = signJwt(
+			{ sub: "u", email: "e@x.cz", scope: "profile", client_id: "c", type: "access" },
+			3600,
+		);
+		const parts = token.split(".");
+		const b64url = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+		// Swap header to alg:"none" — must be rejected before signature checks.
+		const noneHeader = `${b64url({ alg: "none", typ: "JWT" })}.${parts[1]}.${parts[2]}`;
+		expect(verifyJwt(noneHeader)).toBeNull();
+	});
+
 	it("verifyJwt returns null for expired tokens", async () => {
 		const { signJwt, verifyJwt } = await loadModule();
 

@@ -1389,7 +1389,7 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 ### BLOCK 12 — JWT / refresh correctness · size: **M**
 
 - [x] [LOW] On refresh, call Saleor `tokenRefresh`, fail if rejected, rotate stored tokens — DONE in Block 6 (`saleorTokenRefresh` + refresh-grant rewrite). CWE-613.
-- [ ] [MEDIUM/quality] `verifyJwt` uses base64 not base64url for signature decode (intermittent valid-token rejection); also assert `alg==='HS256'` — `tokens.ts` (verifyJwt). Only remaining Block 12 item.
+- [x] [MEDIUM/quality] `verifyJwt` now decodes the signature as base64url (was standard base64 → intermittent valid-token rejection) and asserts the header `alg==='HS256'` before any signature check (alg-confusion defense). +1 test. **Block 12 COMPLETE.**
 
 ### BLOCK 13 — Performance · size: **M**
 

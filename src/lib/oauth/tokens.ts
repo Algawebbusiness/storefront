@@ -80,10 +80,21 @@ export function verifyJwt(token: string): JwtPayload | null {
 
 	const [header, body, sig] = parts;
 
-	// Verify signature (timing-safe)
+	// Reject anything but our HMAC alg (defends against alg confusion). The
+	// header is base64url; decode and assert before trusting the token.
+	try {
+		const decodedHeader = JSON.parse(base64urlDecode(header)) as { alg?: string; typ?: string };
+		if (decodedHeader.alg !== "HS256") return null;
+	} catch {
+		return null;
+	}
+
+	// Verify signature (timing-safe). The signature is base64URL, so decode it
+	// as such — standard base64 mis-decodes the `-`/`_` chars (intermittent
+	// valid-token rejection).
 	const secret = getJwtSecret();
 	const expected = createHmac("sha256", secret).update(`${header}.${body}`).digest();
-	const actual = Buffer.from(sig + "=".repeat((4 - (sig.length % 4)) % 4), "base64");
+	const actual = Buffer.from(sig, "base64url");
 
 	if (expected.length !== actual.length) return null;
 	if (!timingSafeEqual(expected, actual)) return null;
