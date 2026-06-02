@@ -19,6 +19,7 @@ import { validateScopes } from "@/lib/oauth/scopes";
 import { validateCodeChallenge } from "@/lib/oauth/pkce";
 import { createAuthorizationCode } from "@/lib/oauth/codes";
 import { saleorLogin } from "@/lib/oauth/saleor-auth";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
 	const formData = await request.formData();
@@ -61,6 +62,20 @@ export async function POST(request: Request) {
 
 	if (!validateRedirectUri(client, redirectUri)) {
 		return errorResponse("Invalid redirect_uri");
+	}
+
+	// ── Brute-force / credential-stuffing protection (CWE-307) ──
+	const ip = clientIp(request);
+	const [ipLimit, emailLimit] = await Promise.all([
+		rateLimit(`login:ip:${ip}`, 20, 600), // 20 attempts / 10 min per IP
+		rateLimit(`login:email:${email.toLowerCase()}`, 8, 900), // 8 / 15 min per account
+	]);
+	if (!ipLimit.allowed || !emailLimit.allowed) {
+		const retry = Math.max(ipLimit.retryAfterSeconds, emailLimit.retryAfterSeconds);
+		return new NextResponse("Too many login attempts. Please try again later.", {
+			status: 429,
+			headers: { "Retry-After": String(retry) },
+		});
 	}
 
 	// ── Authenticate with Saleor ──

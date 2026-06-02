@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeRawGraphQL, getUserMessage } from "@/lib/graphql";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 
 const REQUEST_PASSWORD_RESET_MUTATION = `
   mutation RequestPasswordReset($email: String!, $channel: String!, $redirectUrl: String!) {
@@ -33,6 +34,21 @@ export async function POST(request: NextRequest) {
 		return NextResponse.json(
 			{ errors: [{ message: "Email, channel, and redirectUrl are required", code: "REQUIRED" }] },
 			{ status: 400 },
+		);
+	}
+
+	// Throttle reset-email sending (anti email-bomb / abuse, CWE-307). Keyed on
+	// email + IP regardless of whether the account exists → no enumeration signal.
+	const ip = clientIp(request);
+	const [emailLimit, ipLimit] = await Promise.all([
+		rateLimit(`pwreset:email:${email.toLowerCase()}`, 3, 3600), // 3 / hour per email
+		rateLimit(`pwreset:ip:${ip}`, 15, 3600), // 15 / hour per IP
+	]);
+	if (!emailLimit.allowed || !ipLimit.allowed) {
+		const retry = Math.max(emailLimit.retryAfterSeconds, ipLimit.retryAfterSeconds);
+		return NextResponse.json(
+			{ errors: [{ message: "Too many reset requests. Please try again later.", code: "RATE_LIMITED" }] },
+			{ status: 429, headers: { "Retry-After": String(retry) } },
 		);
 	}
 

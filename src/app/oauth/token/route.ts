@@ -17,6 +17,7 @@ import { getAgentForOauthClient, getClient, verifyClientSecret } from "@/lib/oau
 import { consumeAuthorizationCode } from "@/lib/oauth/codes";
 import { verifyPkce } from "@/lib/oauth/pkce";
 import { saleorTokenRefresh } from "@/lib/oauth/saleor-auth";
+import { clientIp, rateLimit } from "@/lib/rate-limit";
 import {
 	createTokenPair,
 	verifyJwt,
@@ -62,6 +63,20 @@ export async function POST(request: Request) {
 
 	if (!client_id || !client_secret) {
 		return errorResponse("invalid_client", "client_id and client_secret are required", 401);
+	}
+
+	// ── Brute-force protection on client_secret / code / refresh guessing (CWE-307) ──
+	const ip = clientIp(request);
+	const [ipLimit, clientLimit] = await Promise.all([
+		rateLimit(`token:ip:${ip}`, 60, 60), // 60 / min per IP
+		rateLimit(`token:client:${client_id}`, 120, 60), // 120 / min per client
+	]);
+	if (!ipLimit.allowed || !clientLimit.allowed) {
+		const retry = Math.max(ipLimit.retryAfterSeconds, clientLimit.retryAfterSeconds);
+		return Response.json(
+			{ error: "slow_down", error_description: "Too many token requests" },
+			{ status: 429, headers: { "Retry-After": String(retry) } },
+		);
 	}
 
 	const client = getClient(client_id);

@@ -1379,7 +1379,7 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 10 — Rate limiting / brute-force · size: **M** · (needs Block 9 store)
 
-- [ ] [MEDIUM] Per-IP + per-account rate limit + lockout on OAuth login/token + reset-password — `oauth/consent/route.ts:23-85`, `oauth/token/route.ts:43-79`, `auth/reset-password/route.ts:28-62`. CWE-307.
+- [x] [MEDIUM] Per-IP + per-account rate limiting via new `src/lib/rate-limit.ts` (`rateLimit` over `KvStore.incr/expire` + `clientIp` preferring `cf-connecting-ip`). Applied: OAuth login (`consent` — 20/10min per IP, 8/15min per email), token (`token` — 60/min per IP, 120/min per client), password reset (`reset-password` — 3/h per email, 15/h per IP). All return 429 + `Retry-After`; reset keeps email-enumeration safety. +5 tests; 567/567; tsc 0. CWE-307.
 
 ### BLOCK 11 — Scope enforcement · size: **M**
 
