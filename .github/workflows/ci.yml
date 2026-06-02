@@ -34,6 +34,11 @@ jobs:
       - name: Generate GraphQL types
         run: pnpm run generate:all
 
+      # MCP Apps single-file bundles (src/mcp-apps/dist/, gitignored) — the
+      # serve-html tests assert these exist.
+      - name: Build MCP Apps bundles
+        run: pnpm run build:mcp-apps
+
       - name: Typecheck
         run: pnpm exec tsc --noEmit
 
