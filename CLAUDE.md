@@ -1248,6 +1248,23 @@ pnpm run build            # Produkční build
 
 ---
 
+## 🛡️ Shared Supabase project security remediation (2026-06-02)
+
+While provisioning the durable store, the shared Algaweb Supabase project `retagzzznvtejlztdqcz` (schemas `algaweb`/`finance`/`codelens`/`dwh`/`public` — portal, finance, CodeLens apps) was found to have serious pre-existing holes in OTHER apps. Fixed via MCP migrations (all reversible; the migrations are the record):
+
+- **anon-executable SECURITY DEFINER functions → locked down.** `finance.execute_readonly_sql` (arbitrary read SQL), `public.upsert_invoice`, `public.upsert_tenant`, `finance.detect_internal_transfers`, `finance.track_account_balance_change` → EXECUTE revoked from `PUBLIC`/`anon`/`authenticated`, granted to `service_role` only. `public.get_portal_context()` → `authenticated` + `service_role`. (Key gotcha: functions default to PUBLIC EXECUTE — had to revoke from PUBLIC, not just the roles.)
+- **`portal_*` views (5) cross-tenant leak → fixed.** They were `security_invoker=off` (bypass RLS) + no tenant filter → any authenticated user (and `anon`!) could read ALL tenants' invoices/tenants/contacts/tickets/users. Revoked `anon` SELECT; flipped all 5 to `security_invoker=on`. The underlying `algaweb.*` tables already had correct RLS (operator sees all; tenant admin/viewer sees own) — flipping just activated it. `service_role` still bypasses RLS (Invoice Ninja sync unaffected).
+- **Verify when the portal goes live:** tenant user sees only own data; `operator` role sees all; sync jobs (service_role) unaffected.
+
+**Remaining low-priority (other apps):**
+
+- `function_search_path_mutable` (WARN) on finance/codelens/dwh trigger/util functions — pinned via `ALTER FUNCTION … SET search_path` (2026-06-02).
+- `extension_in_public` (`vector`, `pg_trgm`, `btree_gist`) — **NOT moved**: relocating extensions with dependent columns/operators (vector type, trigram ops) is high-risk on a live DB; revisit deliberately, not as a quick win.
+- `auth_leaked_password_protection` — enable in Supabase Auth settings (1-click dashboard toggle; not SQL).
+- `codelens.*` permissive `USING (true)` RLS — belongs to the CodeLens app.
+
+---
+
 ## 🔒 SECURITY AUDIT REMEDIATION TRACKER (2026-06-01)
 
 > Full audit report: `docs/SECURITY_AUDIT_2026-06-01.md` (multi-agent STRIDE audit, HEAD ff532994).
