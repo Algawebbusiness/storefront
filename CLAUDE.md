@@ -1331,7 +1331,11 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 9 — Durable state backing · size: **L** · INFRA — unblocks 5/6/8/10
 
-**Decision: Upstash Redis via REST (no npm dep — plain fetch), behind a swappable `KvStore` abstraction. Backend choice stays open (Supabase = future adapter); dev/test run on in-memory.**
+**Backend chosen: Supabase Postgres** (HTTP/RPC — works on CF Workers now + Coolify later, reuses the existing Algaweb project `retagzzznvtejlztdqcz`, zero new vendor). Swappable `KvStore` abstraction (Upstash adapter kept as alternative; dev/test in-memory). Priority: Supabase → Upstash → in-memory.
+
+**Supabase side DONE (via MCP, project `retagzzznvtejlztdqcz`):** schema `agent_store` (`kv`/`kv_set`, RLS on / no policy → service*role-only) + `agent_store.kv*_`fns (SECURITY INVOKER, pinned search_path) +`public.agentkv\__`RPC wrappers (EXECUTE only`service_role`→ storefront calls them via the service-role key, no exposed-schema change) +`pg_cron`job`agent_store_gc`(5 min). Advisor-clean (only benign RLS-no-policy INFO). Code:`SupabaseKvStore`+`PrefixedStore` (tenant key prefix) + factory wired. 564/564; tsc 0.
+
+> ⚠️ Pre-existing advisor findings on OTHER apps in this SHARED project (NOT touched — need owner decision): `finance.execute_readonly_sql`, `public.upsert_invoice`, `public.upsert_tenant` are `anon`-executable SECURITY DEFINER (arbitrary read / invoice+tenant write via the public anon key); 5× `portal_*` SECURITY DEFINER views; permissive `codelens.*` RLS. Recommend a separate remediation pass on the portal/finance apps.
 
 - [x] New `src/lib/store/` — `KvStore` interface (`get/set(ttl)/del/getdel/incr/incrby/expire/sadd/sismember/scard`) + `InMemoryKvStore` (dev/test/single-instance) + `UpstashKvStore` (REST) + `getStore()` factory (Upstash when `UPSTASH_REDIS_REST_URL`+`_TOKEN` set, else in-memory with a prod warning).
 - [x] `oauth/codes.ts` → store; single-use now ATOMIC via `getdel` (replay-safe across instances), TTL-backed expiry.

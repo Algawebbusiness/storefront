@@ -18,6 +18,8 @@
  *     production warning.
  */
 
+import { SupabaseKvStore } from "./supabase";
+
 export interface KvStore {
 	/** Get a string value, or null if missing/expired. */
 	get(key: string): Promise<string | null>;
@@ -189,35 +191,96 @@ class UpstashKvStore implements KvStore {
 	}
 }
 
+// ─────────────────────── Tenant key-prefixing wrapper ───────────────────────
+
+/**
+ * Wraps any `KvStore` and prefixes every key with `tenant:<id>:` so multiple
+ * client storefronts can SAFELY share one backend (soft isolation by namespace;
+ * see CLAUDE.md for the security trade-offs vs a per-tenant store).
+ */
+class PrefixedStore implements KvStore {
+	constructor(
+		private prefix: string,
+		private inner: KvStore,
+	) {}
+	private k(key: string): string {
+		return `${this.prefix}:${key}`;
+	}
+	get(key: string) {
+		return this.inner.get(this.k(key));
+	}
+	set(key: string, value: string, ttl?: number) {
+		return this.inner.set(this.k(key), value, ttl);
+	}
+	setnx(key: string, value: string, ttl?: number) {
+		return this.inner.setnx(this.k(key), value, ttl);
+	}
+	del(key: string) {
+		return this.inner.del(this.k(key));
+	}
+	getdel(key: string) {
+		return this.inner.getdel(this.k(key));
+	}
+	incr(key: string) {
+		return this.inner.incr(this.k(key));
+	}
+	incrby(key: string, amount: number) {
+		return this.inner.incrby(this.k(key), amount);
+	}
+	expire(key: string, ttl: number) {
+		return this.inner.expire(this.k(key), ttl);
+	}
+	sadd(key: string, member: string) {
+		return this.inner.sadd(this.k(key), member);
+	}
+	sismember(key: string, member: string) {
+		return this.inner.sismember(this.k(key), member);
+	}
+	scard(key: string) {
+		return this.inner.scard(this.k(key));
+	}
+}
+
 // ───────────────────────────── Factory ──────────────────────────────────────
 
 let singleton: KvStore | null = null;
+let backend: KvStore | null = null;
 let warnedInMemory = false;
 
-export function getStore(): KvStore {
-	if (singleton) return singleton;
+function buildBackend(): KvStore {
+	// 1. Supabase (HTTP, works on edge + Node; reuses an existing project).
+	const sbUrl = process.env.SUPABASE_URL;
+	const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+	if (sbUrl && sbKey) return new SupabaseKvStore(sbUrl, sbKey);
 
-	const url = process.env.UPSTASH_REDIS_REST_URL;
-	const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-	if (url && token) {
-		singleton = new UpstashKvStore(url, token);
-		return singleton;
-	}
+	// 2. Upstash Redis (HTTP).
+	const upUrl = process.env.UPSTASH_REDIS_REST_URL;
+	const upToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+	if (upUrl && upToken) return new UpstashKvStore(upUrl, upToken);
 
+	// 3. In-memory fallback (dev/test/single-instance) — unsafe in serverless prod.
 	if (process.env.NODE_ENV === "production" && !warnedInMemory) {
 		warnedInMemory = true;
 		console.warn(
-			"[store] UPSTASH_REDIS_REST_URL/TOKEN not set — falling back to in-memory store. " +
-				"This is UNSAFE on multi-instance/serverless deploys (revoked tokens, rate/spend caps, " +
-				"and auth-code single-use do not hold across instances). Configure Upstash in production.",
+			"[store] No durable store configured (SUPABASE_* or UPSTASH_*) — falling back to in-memory. " +
+				"UNSAFE on multi-instance/serverless deploys (revoked tokens, rate/spend caps, nonces, " +
+				"and locks do not hold across instances).",
 		);
 	}
-	singleton = new InMemoryKvStore();
+	return new InMemoryKvStore();
+}
+
+export function getStore(): KvStore {
+	if (singleton) return singleton;
+	backend = buildBackend();
+	const prefix = process.env.STORE_TENANT_PREFIX;
+	singleton = prefix ? new PrefixedStore(prefix, backend) : backend;
 	return singleton;
 }
 
 /** Test helper: reset the in-memory singleton between tests. */
 export function _resetStore(): void {
-	if (singleton instanceof InMemoryKvStore) singleton._reset();
+	if (backend instanceof InMemoryKvStore) backend._reset();
 	singleton = null;
+	backend = null;
 }
