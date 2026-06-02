@@ -442,7 +442,8 @@ export function registerCheckoutTools(server: McpServer) {
 				};
 			}
 
-			// Fallback: order fetch failed; ship the minimal mutation echo.
+			// Fallback: order fetch failed AFTER payment + completion succeeded — report
+			// the order as PAID (it is) with totals unknown, never as unpaid/zero.
 			return {
 				content: [
 					{
@@ -454,9 +455,10 @@ export function registerCheckoutTools(server: McpServer) {
 									number: order.number,
 									status: order.status,
 									statusDisplay: order.status,
-									currency: "",
-									total: 0,
-									isPaid: false,
+									currency: null,
+									total: null,
+									isPaid: true,
+									detail: "Order created and paid; full receipt could not be loaded.",
 								},
 								null,
 								2,

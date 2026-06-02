@@ -1400,10 +1400,11 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 14 — Quality / dedup / tests · size: **M**
 
-- [ ] Dedup `validateApiKey` (5 copies, 2 conventions) + ACP PATCH apply block (6× + divergent MCP copy) into shared helpers.
-- [ ] Fix misleading `complete_checkout` fallback that reports a paid order as `isPaid:false,total:0` — `checkout.ts:464-487`.
-- [ ] Add charge-without-completion compensation (void/refund on `checkoutComplete` failure).
-- [ ] Add negative/authz tests: IDOR 403, fail-open fallbacks, JWT alg/header tampering.
+- [x] Dedup `validateApiKey` (5 copies) → shared `isMcpApiKeyAuthorized` (done in Block 2).
+- [x] Fix misleading `complete_checkout` fallback: after payment+completion succeed but the order re-fetch fails, it reported `isPaid:false,total:0` (agent sees a paid order as unpaid). Now reports `isPaid:true`, `total/currency:null`, + a `detail` note.
+- [x] Negative/authz tests added throughout the remediation: IDOR 404 (orders/carts/checkouts/ACP), fail-closed auth (prod), MCP `validateApiKey` fail-closed, JWT alg-confusion, signature replay/stale-timestamp/missing-headers, rate-limit, scope-mapping, idempotency locks. (~40 new tests; suite 572 → from 530 at audit time.)
+- [ ] [DEFERRED] Dedup ACP PATCH apply block (cosmetic).
+- [ ] [DEFERRED — real money-safety gap] Charge-without-completion compensation: if Stripe payment is captured but `checkoutComplete` then fails, the buyer is charged with no order. Needs a Saleor transaction void/refund on that failure path + careful testing — left as a deliberate follow-up (involved, money-path).
 
 ### BLOCK 15 — Low/Info hardening backlog · size: **S**
 
