@@ -127,7 +127,7 @@ class RequestQueue {
 	private readonly maxConcurrent: number;
 	private readonly minDelayMs: number;
 
-	constructor(maxConcurrent = 3, minDelayMs = 300) {
+	constructor(maxConcurrent = 10, minDelayMs = 0) {
 		this.maxConcurrent = maxConcurrent;
 		this.minDelayMs = minDelayMs;
 	}
@@ -137,8 +137,15 @@ class RequestQueue {
 		this.activeRequests++;
 
 		try {
-			const [result] = await Promise.all([fn(), sleep(this.minDelayMs)]);
-			return result;
+			// PERF: only impose a per-request delay when one is explicitly
+			// configured. The previous unconditional ~200ms floor was added to
+			// EVERY Saleor read (even cache hits), inflating TTFB; the
+			// concurrency cap alone is enough to be polite to Saleor.
+			if (this.minDelayMs > 0) {
+				const [result] = await Promise.all([fn(), sleep(this.minDelayMs)]);
+				return result;
+			}
+			return await fn();
 		} finally {
 			this.activeRequests--;
 			this.processQueue();
@@ -176,8 +183,8 @@ function formatVariablesForLog(variables: Record<string, unknown>): string {
 }
 
 const requestQueue = new RequestQueue(
-	parseInt(process.env.SALEOR_MAX_CONCURRENT_REQUESTS || "3", 10),
-	parseInt(process.env.SALEOR_MIN_REQUEST_DELAY_MS || "200", 10),
+	parseInt(process.env.SALEOR_MAX_CONCURRENT_REQUESTS || "10", 10),
+	parseInt(process.env.SALEOR_MIN_REQUEST_DELAY_MS || "0", 10),
 );
 
 function getRetryConfig() {

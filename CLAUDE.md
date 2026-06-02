@@ -1394,8 +1394,9 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 13 — Performance · size: **M**
 
-- [ ] [HIGH-perf] Global Saleor request queue adds unconditional ~200ms sleep + caps to 3 concurrent — drop sleep, back off only on observed 429s, exempt cache hits — `graphql.ts:124-181`.
-- [ ] Cache read-only protocol queries (`saleorQuery` uncached); collapse triple checkout fetch (`complete/route.ts:74,103,171`); remove wasted activity-log GET (`agent-log.ts:143-154`); prune unbounded `revokedTokens`.
+- [x] [HIGH-perf] Saleor `RequestQueue`: removed the unconditional ~200ms per-request sleep (now only if `SALEOR_MIN_REQUEST_DELAY_MS` > 0) and raised the default concurrency cap 3 → 10. Cuts the hard TTFB floor on every storefront Saleor read. `graphql.ts` + stale next.config comment fixed.
+- [x] `revokedTokens` unbounded growth — RESOLVED by Block 9 (now in the durable store with refresh-token TTL).
+- [ ] [minor, deferred] Cache read-only protocol `saleorQuery` reads; collapse the triple checkout fetch in `complete/route.ts` (low value + money-path risk after the idempotency change; leave as-is). `agent-log` has no wasted GET (audit was imprecise — it's a single fire-and-forget POST).
 
 ### BLOCK 14 — Quality / dedup / tests · size: **M**
 

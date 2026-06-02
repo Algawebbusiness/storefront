@@ -16,8 +16,9 @@ const config = {
 	// See: https://vercel.com/blog/how-we-optimized-package-imports-in-next-js
 	experimental: {
 		optimizePackageImports: ["lucide-react", "lodash-es"],
-		// Note: API rate limiting is handled by RequestQueue in src/lib/graphql.ts
-		// (max 3 concurrent requests + 200ms delay between requests)
+		// Note: Saleor request concurrency is bounded by RequestQueue in
+		// src/lib/graphql.ts (default 10 concurrent; no per-request delay unless
+		// SALEOR_MIN_REQUEST_DELAY_MS is set).
 	},
 	images: {
 		remotePatterns: [
