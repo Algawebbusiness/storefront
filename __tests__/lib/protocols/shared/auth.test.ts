@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { verifyAgentRequest } from "@/lib/protocols/shared/auth";
 import { _resetEnvRegistryCache } from "@/lib/protocols/shared/agent-registry";
-import { signPayload, getPublicKeyBase64 } from "@/lib/protocols/shared/signing";
+import {
+	signPayload,
+	getPublicKeyBase64,
+	buildSigningString,
+	sha256Hex,
+} from "@/lib/protocols/shared/signing";
 import type { AgentIdentity } from "@/lib/protocols/shared/agent-registry-types";
 
 /** Generate a fresh ed25519 keypair via Web Crypto and expose base64 forms. */
@@ -42,6 +47,45 @@ function makeRequest(opts: { method?: string; body?: string; headers?: Record<st
 	});
 }
 
+let nonceCounter = 0;
+
+/**
+ * Build a request signed with the canonical scheme (method + path + timestamp
+ * + nonce + body hash). `signBody` lets a test sign a different body than it
+ * sends, to simulate tampering.
+ */
+async function signedRequest(opts: {
+	body: string;
+	agent: string;
+	method?: string;
+	signBody?: string;
+	timestamp?: string;
+	nonce?: string;
+}): Promise<Request> {
+	const method = opts.method ?? "POST";
+	const path = "/api/ucp/rest/test";
+	const timestamp = opts.timestamp ?? String(Math.floor(Date.now() / 1000));
+	const nonce = opts.nonce ?? `nonce-${++nonceCounter}`;
+	const signingString = buildSigningString({
+		method,
+		pathWithQuery: path,
+		timestamp,
+		nonce,
+		bodyHashHex: await sha256Hex(opts.signBody ?? opts.body),
+	});
+	const sig = await signPayload(signingString);
+	return makeRequest({
+		method,
+		body: opts.body,
+		headers: {
+			"UCP-Signature": `keyid="x",alg="ed25519",sig="${sig}"`,
+			"UCP-Agent": opts.agent,
+			"UCP-Timestamp": timestamp,
+			"UCP-Nonce": nonce,
+		},
+	});
+}
+
 describe("verifyAgentRequest — signed request path", () => {
 	let publicKeyBase64: string;
 
@@ -59,16 +103,7 @@ describe("verifyAgentRequest — signed request path", () => {
 		setRegistry([agent]);
 
 		const body = JSON.stringify({ hello: "world" });
-		const sig = await signPayload(body);
-		const result = await verifyAgentRequest(
-			makeRequest({
-				body,
-				headers: {
-					"UCP-Signature": `keyid="x",alg="ed25519",sig="${sig}"`,
-					"UCP-Agent": "openai-prod",
-				},
-			}),
-		);
+		const result = await verifyAgentRequest(await signedRequest({ body, agent: "openai-prod" }));
 
 		expect(result.ok).toBe(true);
 		if (result.ok) {
@@ -82,14 +117,12 @@ describe("verifyAgentRequest — signed request path", () => {
 		const agent = makeAgent({ public_key: publicKeyBase64 });
 		setRegistry([agent]);
 
-		const sig = await signPayload(JSON.stringify({ ok: true }));
+		// Sign one body, send a different one → body-hash mismatch → invalid sig.
 		const result = await verifyAgentRequest(
-			makeRequest({
+			await signedRequest({
 				body: JSON.stringify({ ok: false }),
-				headers: {
-					"UCP-Signature": `keyid="x",alg="ed25519",sig="${sig}"`,
-					"UCP-Agent": agent.id,
-				},
+				signBody: JSON.stringify({ ok: true }),
+				agent: agent.id,
 			}),
 		);
 
@@ -99,16 +132,7 @@ describe("verifyAgentRequest — signed request path", () => {
 
 	it("rejects when agent is unknown", async () => {
 		setRegistry([]);
-		const sig = await signPayload("{}");
-		const result = await verifyAgentRequest(
-			makeRequest({
-				body: "{}",
-				headers: {
-					"UCP-Signature": `keyid="x",alg="ed25519",sig="${sig}"`,
-					"UCP-Agent": "ghost",
-				},
-			}),
-		);
+		const result = await verifyAgentRequest(await signedRequest({ body: "{}", agent: "ghost" }));
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
 			expect(result.status).toBe(401);
@@ -118,16 +142,7 @@ describe("verifyAgentRequest — signed request path", () => {
 
 	it("returns 403 when agent is suspended (vs 401 for unknown)", async () => {
 		setRegistry([makeAgent({ id: "naughty", public_key: publicKeyBase64, status: "suspended" })]);
-		const sig = await signPayload("{}");
-		const result = await verifyAgentRequest(
-			makeRequest({
-				body: "{}",
-				headers: {
-					"UCP-Signature": `keyid="x",alg="ed25519",sig="${sig}"`,
-					"UCP-Agent": "naughty",
-				},
-			}),
-		);
+		const result = await verifyAgentRequest(await signedRequest({ body: "{}", agent: "naughty" }));
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
 			expect(result.status).toBe(403);
@@ -169,15 +184,10 @@ describe("verifyAgentRequest — signed request path", () => {
 		const agent = makeAgent({ id: "openai-prod", public_key: publicKeyBase64 });
 		setRegistry([agent]);
 
-		const body = "{}";
-		const sig = await signPayload(body);
 		const result = await verifyAgentRequest(
-			makeRequest({
-				body,
-				headers: {
-					"UCP-Signature": `keyid="x",alg="ed25519",sig="${sig}"`,
-					"UCP-Agent": `id="openai-prod",profile="https://openai.com/.well-known/ucp"`,
-				},
+			await signedRequest({
+				body: "{}",
+				agent: `id="openai-prod",profile="https://openai.com/.well-known/ucp"`,
 			}),
 		);
 
@@ -186,6 +196,44 @@ describe("verifyAgentRequest — signed request path", () => {
 			expect(result.agent.id).toBe("openai-prod");
 			expect(result.profileUrl).toBe("https://openai.com/.well-known/ucp");
 		}
+	});
+
+	it("rejects a replayed nonce (same signature used twice)", async () => {
+		setRegistry([makeAgent({ id: "openai-prod", public_key: publicKeyBase64 })]);
+		const opts = {
+			body: "{}",
+			agent: "openai-prod",
+			nonce: "replay-nonce-1",
+			timestamp: String(Math.floor(Date.now() / 1000)),
+		};
+		const first = await verifyAgentRequest(await signedRequest(opts));
+		expect(first.ok).toBe(true);
+		const second = await verifyAgentRequest(await signedRequest(opts));
+		expect(second.ok).toBe(false);
+		if (!second.ok) expect(second.reason).toMatch(/[Rr]eplay/);
+	});
+
+	it("rejects a stale timestamp (outside the skew window)", async () => {
+		setRegistry([makeAgent({ id: "openai-prod", public_key: publicKeyBase64 })]);
+		const stale = String(Math.floor(Date.now() / 1000) - 1000);
+		const result = await verifyAgentRequest(
+			await signedRequest({ body: "{}", agent: "openai-prod", timestamp: stale }),
+		);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toMatch(/timestamp/);
+	});
+
+	it("rejects a signed request missing UCP-Timestamp/UCP-Nonce", async () => {
+		setRegistry([makeAgent({ id: "openai-prod", public_key: publicKeyBase64 })]);
+		const sig = await signPayload("anything");
+		const result = await verifyAgentRequest(
+			makeRequest({
+				body: "{}",
+				headers: { "UCP-Signature": `keyid="x",alg="ed25519",sig="${sig}"`, "UCP-Agent": "openai-prod" },
+			}),
+		);
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toMatch(/Missing UCP-Timestamp/);
 	});
 });
 

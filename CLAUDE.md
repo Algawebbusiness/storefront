@@ -1308,7 +1308,8 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 ### BLOCK 5 — ed25519 signature scheme · size: **L** · (nonce store ties to Block 9)
 
-- [ ] [HIGH] Canonical signing input = method + path + query + `UCP-Timestamp` + `UCP-Nonce` (+ body hash for writes), per RFC 9421. Reject skewed timestamps + reused nonces (persistent store). Require path `id` covered. Treat body-read failure as hard 401 (currently fail-open empty-string) — `src/lib/protocols/shared/auth.ts:215-219,318-324`, `signing.ts:67-78`. CWE-347.
+- [x] [HIGH] Canonical signed-request scheme. New `buildSigningString({method, pathWithQuery, timestamp, nonce, bodyHashHex})` + `sha256Hex` in `signing.ts`. `verifySignedRequest` now: requires `UCP-Timestamp` (±300s skew) + `UCP-Nonce`; verifies the ed25519 sig over the canonical string (binds method/path/query/timestamp/nonce/body-hash, so a captured sig can't be replayed to another verb/path/resource and bodiless GETs no longer all sign `""`); rejects replayed nonces via `store.setnx` (new KvStore primitive, per-agent, TTL=skew); and reads the body STRICTLY (read failure → 401, was fail-open `""`). CWE-347. +3 anti-replay tests; auth.test signed cases rewritten to the canonical scheme; 561/561; tsc 0.
+  - **⚠️ BREAKING protocol change:** agents must now send `UCP-Timestamp` (unix seconds) + `UCP-Nonce` and sign the canonical string (not the bare body). **TODO: update the public signing spec / client SDK / `AGENTS.md` + `.well-known/ucp` docs** so integrators match. Outbound agent-webhook signing (server→agent, body-only) is unchanged.
 
 ### BLOCK 6 — Saleor tokens out of JWT · size: **M** · (server store ties to Block 9)
 

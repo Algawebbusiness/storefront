@@ -18,8 +18,12 @@
 import { lookupAgent } from "./agent-registry";
 import type { AgentIdentity } from "./agent-registry-types";
 import { parseSignatureHeader } from "./response";
-import { verifyDetached } from "./signing";
+import { buildSigningString, sha256Hex, verifyDetached } from "./signing";
 import { verifyJwt, type JwtPayload } from "@/lib/oauth/tokens";
+import { getStore } from "@/lib/store";
+
+/** Max clock skew (seconds) for a signed request's UCP-Timestamp. */
+const MAX_SIGNATURE_SKEW_S = 300;
 
 /**
  * Synthetic agent record representing the deprecated AGENT_API_KEYS bearer
@@ -145,6 +149,18 @@ async function verifySignedRequest(
 		return { ok: false, status: 401, reason: `Unsupported signature algorithm: ${parsed.alg}` };
 	}
 
+	// ── Anti-replay inputs (CWE-347): timestamp + per-request nonce ──
+	const timestamp = request.headers.get("UCP-Timestamp");
+	const nonce = request.headers.get("UCP-Nonce");
+	if (!timestamp || !nonce) {
+		return { ok: false, status: 401, reason: "Missing UCP-Timestamp or UCP-Nonce header" };
+	}
+	const tsNum = Number(timestamp);
+	const nowS = Math.floor(Date.now() / 1000);
+	if (!Number.isFinite(tsNum) || Math.abs(nowS - tsNum) > MAX_SIGNATURE_SKEW_S) {
+		return { ok: false, status: 401, reason: "Request timestamp outside allowed window" };
+	}
+
 	// UCP-Agent may be a bare ID or a structured value ("id=...,profile=...").
 	const agentId = extractAgentId(agentIdHeader);
 	const profileUrl = extractProfileUrl(agentIdHeader);
@@ -160,10 +176,33 @@ async function verifySignedRequest(
 		return { ok: false, status: lookup.reason === "unknown" ? 401 : 403, reason };
 	}
 
-	const bodyText = await safeReadBody(request);
-	const valid = await verifyDetached(bodyText, parsed.sig, lookup.agent.public_key);
+	// Read the body strictly — a read failure must NOT fail open (was "" before).
+	let bodyText: string;
+	try {
+		bodyText = await request.text();
+	} catch {
+		return { ok: false, status: 401, reason: "Could not read request body" };
+	}
+
+	// Verify the signature over the canonical request string (method + path +
+	// query + timestamp + nonce + body hash), not the bare body.
+	const url = new URL(request.url);
+	const signingString = buildSigningString({
+		method: request.method,
+		pathWithQuery: url.pathname + url.search,
+		timestamp,
+		nonce,
+		bodyHashHex: await sha256Hex(bodyText),
+	});
+	const valid = await verifyDetached(signingString, parsed.sig, lookup.agent.public_key);
 	if (!valid) {
 		return { ok: false, status: 401, reason: "Invalid signature" };
+	}
+
+	// Reject a replayed nonce (atomic set-if-absent, scoped per agent, TTL = skew).
+	const fresh = await getStore().setnx(`ucp:nonce:${lookup.agent.id}:${nonce}`, "1", MAX_SIGNATURE_SKEW_S);
+	if (!fresh) {
+		return { ok: false, status: 401, reason: "Replayed request nonce" };
 	}
 
 	return {

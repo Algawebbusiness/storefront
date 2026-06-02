@@ -87,6 +87,39 @@ export async function getPublicKeyBase64(): Promise<string> {
 	return bytesToBase64(new Uint8Array(raw));
 }
 
+/**
+ * SHA-256 hex of a string, via Web Crypto (edge-safe).
+ */
+export async function sha256Hex(data: string): Promise<string> {
+	const digest = await subtle().digest("SHA-256", new TextEncoder().encode(data));
+	return Array.from(new Uint8Array(digest))
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+}
+
+/**
+ * Canonical string an agent must sign for a UCP/ACP request (RFC 9421-inspired).
+ * Binding the method, path+query, a timestamp, a per-request nonce, and a hash
+ * of the body means a captured signature can't be replayed against a different
+ * verb/path/resource, and bodiless GET/DELETE no longer all sign the same
+ * empty string (CWE-347). Both client and server MUST build it identically.
+ */
+export function buildSigningString(parts: {
+	method: string;
+	pathWithQuery: string;
+	timestamp: string;
+	nonce: string;
+	bodyHashHex: string;
+}): string {
+	return [
+		parts.method.toUpperCase(),
+		parts.pathWithQuery,
+		parts.timestamp,
+		parts.nonce,
+		parts.bodyHashHex,
+	].join("\n");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internals
 // ─────────────────────────────────────────────────────────────────────────────

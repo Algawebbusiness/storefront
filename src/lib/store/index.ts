@@ -23,6 +23,8 @@ export interface KvStore {
 	get(key: string): Promise<string | null>;
 	/** Set a string value with an optional TTL in seconds. */
 	set(key: string, value: string, ttlSeconds?: number): Promise<void>;
+	/** Set only if the key does not exist; returns true if set (atomic — for nonce/replay). */
+	setnx(key: string, value: string, ttlSeconds?: number): Promise<boolean>;
 	/** Delete a key. */
 	del(key: string): Promise<void>;
 	/** Atomically get-and-delete (single-use consume; replay-safe). */
@@ -80,6 +82,11 @@ export class InMemoryKvStore implements KvStore {
 	}
 	async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
 		this.kv.set(key, { value, expiresAtMs: ttlSeconds ? Date.now() + ttlSeconds * 1000 : null });
+	}
+	async setnx(key: string, value: string, ttlSeconds?: number): Promise<boolean> {
+		if (this.aliveKv(key)) return false;
+		this.kv.set(key, { value, expiresAtMs: ttlSeconds ? Date.now() + ttlSeconds * 1000 : null });
+		return true;
 	}
 	async del(key: string): Promise<void> {
 		this.kv.delete(key);
@@ -150,6 +157,11 @@ class UpstashKvStore implements KvStore {
 	}
 	async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
 		await this.cmd(ttlSeconds ? ["SET", key, value, "EX", ttlSeconds] : ["SET", key, value]);
+	}
+	async setnx(key: string, value: string, ttlSeconds?: number): Promise<boolean> {
+		const args = ttlSeconds ? ["SET", key, value, "NX", "EX", ttlSeconds] : ["SET", key, value, "NX"];
+		const result = await this.cmd<string | null>(args);
+		return result === "OK";
 	}
 	async del(key: string): Promise<void> {
 		await this.cmd(["DEL", key]);
