@@ -14,6 +14,8 @@ export interface UcpProfile {
 		payment_handlers: Record<string, UcpPaymentHandler[]>;
 	};
 	signing_keys: UcpSigningKey[];
+	/** How agents must sign requests (B3 signed-request scheme). */
+	request_signing: UcpRequestSigning;
 	/** Phase B8: agent platforms this storefront accepts and trusts. */
 	accepted_platforms?: AcceptedPlatform[];
 }
@@ -124,6 +126,26 @@ export interface UcpSigningKey {
 	kid: string;
 	algorithm: string;
 	public_key: string;
+}
+
+/**
+ * How an agent must sign requests to this storefront (discovery for the B3
+ * signed-request scheme). Published in the UCP profile so integrators can
+ * implement it without out-of-band docs.
+ */
+export interface UcpRequestSigning {
+	algorithm: "ed25519";
+	/** Headers every signed request must carry. */
+	required_headers: string[];
+	/** The exact string that is signed, with `\n` between the listed fields. */
+	canonical_string: string;
+	canonical_string_fields: string[];
+	/** Format of the `UCP-Signature` header value. */
+	signature_header_format: string;
+	timestamp: string;
+	nonce: string;
+	body_hash: string;
+	max_clock_skew_seconds: number;
 }
 
 /** UCP response wrapper — every UCP response includes this metadata */

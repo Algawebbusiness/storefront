@@ -35,6 +35,19 @@ describe("buildUcpProfile (UCP 2026-04-08)", () => {
 		expect(checkout?.spec).toBe("https://ucp.dev/2026-04-08/specification/checkout");
 	});
 
+	it("publishes the request_signing contract (B3 / Block 5)", async () => {
+		vi.resetModules();
+		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");
+		const profile = await buildUcpProfile();
+
+		expect(profile.request_signing.algorithm).toBe("ed25519");
+		expect(profile.request_signing.required_headers).toEqual(
+			expect.arrayContaining(["UCP-Agent", "UCP-Signature", "UCP-Timestamp", "UCP-Nonce"]),
+		);
+		expect(profile.request_signing.max_clock_skew_seconds).toBe(300);
+		expect(profile.request_signing.canonical_string).toContain("{nonce}");
+	});
+
 	it("advertises the foundation capabilities including cart (A4) and catalog (A5)", async () => {
 		vi.resetModules();
 		const { buildUcpProfile } = await import("@/lib/protocols/ucp/profile-builder");

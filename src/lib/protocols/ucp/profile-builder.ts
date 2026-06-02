@@ -22,12 +22,29 @@ import {
 	UCP_VERSION,
 	type CapabilityDef,
 } from "./capabilities";
-import type {
-	AcceptedPlatform,
-	UcpCapability,
-	UcpProfile,
-	UcpSigningKey,
-} from "./types";
+import type { AcceptedPlatform, UcpCapability, UcpProfile, UcpRequestSigning, UcpSigningKey } from "./types";
+
+/**
+ * Published request-signing contract (B3). MUST match `verifySignedRequest`
+ * in `shared/auth.ts` and `buildSigningString` in `shared/signing.ts`.
+ */
+const REQUEST_SIGNING: UcpRequestSigning = {
+	algorithm: "ed25519",
+	required_headers: ["UCP-Agent", "UCP-Signature", "UCP-Timestamp", "UCP-Nonce"],
+	canonical_string: "{method}\n{path_and_query}\n{timestamp}\n{nonce}\n{body_sha256_hex}",
+	canonical_string_fields: [
+		"method (uppercase, e.g. POST)",
+		"path_and_query (e.g. /api/ucp/rest/orders/abc?x=1)",
+		"timestamp (the UCP-Timestamp header value)",
+		"nonce (the UCP-Nonce header value)",
+		"body_sha256_hex (lowercase hex SHA-256 of the raw body; hash the empty string for bodiless requests)",
+	],
+	signature_header_format: 'keyid="<kid>",alg="ed25519",sig="<base64(signature)>"',
+	timestamp: "Unix epoch seconds; rejected if more than max_clock_skew_seconds from server time",
+	nonce: "Unique per request (e.g. a random 128-bit hex). Replayed nonces are rejected.",
+	body_hash: "SHA-256 of the raw request body, lowercase hex",
+	max_clock_skew_seconds: 300,
+};
 
 /** Build the UCP business profile from environment configuration. */
 export async function buildUcpProfile(): Promise<UcpProfile> {
@@ -68,6 +85,7 @@ export async function buildUcpProfile(): Promise<UcpProfile> {
 		},
 
 		signing_keys: signingKeys,
+		request_signing: REQUEST_SIGNING,
 		...(acceptedPlatforms.length > 0 ? { accepted_platforms: acceptedPlatforms } : {}),
 	};
 }
