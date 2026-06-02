@@ -1219,6 +1219,35 @@ pnpm run build            # Produkční build
 
 ---
 
+## 🚀 Deployment — Cloudflare Workers (OpenNext) + durable-store env
+
+> **Target decided:** Cloudflare **Workers** (NOT Pages — Pages can't run this Next.js app). Each client storefront = its own Worker, all sharing ONE Supabase durable store, isolated by `STORE_TENANT_PREFIX`. Later, higher-traffic deployments may move to Coolify (Node container) — the store backend works on both.
+
+**Not wired yet (TODO, separate from security work):** the repo has NO `wrangler.{toml,jsonc}`, `open-next.config.ts`, or `@opennextjs/cloudflare` dep. Workers deploy needs the OpenNext Cloudflare adapter scaffolded first. When doing it, verify the current OpenNext steps via Context7 (versions move fast).
+
+**Required Worker config (`wrangler.jsonc`):**
+
+```jsonc
+{
+	"name": "storefront-<client>",
+	"compatibility_date": "2025-03-01",
+	"compatibility_flags": ["nodejs_compat"], // REQUIRED — app uses node:crypto
+	"vars": {
+		"SUPABASE_URL": "https://retagzzznvtejlztdqcz.supabase.co",
+		"STORE_TENANT_PREFIX": "<client>" // per-Worker tenant isolation
+	}
+}
+```
+
+- `nodejs_compat` is mandatory: `oauth/tokens.ts` (HMAC/randomBytes), `lib/timing-safe-equal.ts`, and the Saleor webhook import `node:crypto`. ed25519 uses WebCrypto `subtle` (native on Workers).
+- Secret (never a var / never `NEXT_PUBLIC_`): `wrangler secret put SUPABASE_SERVICE_ROLE_KEY`. Local dev: put it in `.dev.vars` (gitignored).
+- OpenNext maps Worker vars + secrets onto `process.env`, so the existing `process.env.*` reads work.
+- Store backend selection is automatic (`src/lib/store/index.ts` factory): Supabase (when `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` set) → Upstash → in-memory.
+
+**Supabase store is already provisioned** (project `retagzzznvtejlztdqcz`, schema `agent_store` + `public.agentkv_*` RPC + pg_cron GC) — see Block 9. Nothing more to do DB-side; just set the env above.
+
+---
+
 ## 🔒 SECURITY AUDIT REMEDIATION TRACKER (2026-06-01)
 
 > Full audit report: `docs/SECURITY_AUDIT_2026-06-01.md` (multi-agent STRIDE audit, HEAD ff532994).
@@ -1333,7 +1362,7 @@ S = small (config/1-file, ~minutes) · M = medium (a few files + logic) · L = l
 
 **Backend chosen: Supabase Postgres** (HTTP/RPC — works on CF Workers now + Coolify later, reuses the existing Algaweb project `retagzzznvtejlztdqcz`, zero new vendor). Swappable `KvStore` abstraction (Upstash adapter kept as alternative; dev/test in-memory). Priority: Supabase → Upstash → in-memory.
 
-**Supabase side DONE (via MCP, project `retagzzznvtejlztdqcz`):** schema `agent_store` (`kv`/`kv_set`, RLS on / no policy → service*role-only) + `agent_store.kv*_`fns (SECURITY INVOKER, pinned search_path) +`public.agentkv\__`RPC wrappers (EXECUTE only`service_role`→ storefront calls them via the service-role key, no exposed-schema change) +`pg_cron`job`agent_store_gc`(5 min). Advisor-clean (only benign RLS-no-policy INFO). Code:`SupabaseKvStore`+`PrefixedStore` (tenant key prefix) + factory wired. 564/564; tsc 0.
+**Supabase side DONE (via MCP, project `retagzzznvtejlztdqcz`):** schema `agent_store` (`kv`/`kv_set`, RLS on / no policy → service*role-only) + `agent_store.kv*\_`fns (SECURITY INVOKER, pinned search_path) +`public.agentkv\_\_`RPC wrappers (EXECUTE only`service_role`→ storefront calls them via the service-role key, no exposed-schema change) +`pg_cron`job`agent_store_gc`(5 min). Advisor-clean (only benign RLS-no-policy INFO). Code:`SupabaseKvStore`+`PrefixedStore` (tenant key prefix) + factory wired. 564/564; tsc 0.
 
 > ⚠️ Pre-existing advisor findings on OTHER apps in this SHARED project (NOT touched — need owner decision): `finance.execute_readonly_sql`, `public.upsert_invoice`, `public.upsert_tenant` are `anon`-executable SECURITY DEFINER (arbitrary read / invoice+tenant write via the public anon key); 5× `portal_*` SECURITY DEFINER views; permissive `codelens.*` RLS. Recommend a separate remediation pass on the portal/finance apps.
 
