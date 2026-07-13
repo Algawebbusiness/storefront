@@ -1,9 +1,10 @@
 name: Check Saleor release and update types
 
+# Manual only. Upstream Saleor no longer attaches schema.graphql to releases,
+# so the scheduled run failed every weekday; generate types from a running
+# instance instead (pnpm generate against SALEOR_API_URL).
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 18 * * 1-5" # workdays at 18:00
 
 jobs:
   check_saleor_release:
